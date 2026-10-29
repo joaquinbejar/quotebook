@@ -21,6 +21,12 @@ takes the decision away from the caller. Production code never panics.
   checked and return an error variant (for example `InvariantViolated`), never assert.
 - `overflow-checks = true` stays in the release profile as a last-resort net; the code must
   never rely on it, because hitting it is a panic.
+- Lints are per workspace member (`[lints] workspace = true`), so `float_arithmetic` also
+  covers SDKs and tools: they stay integer or `Decimal`, or carry a crate-level
+  `#![allow(clippy::float_arithmetic)]` reviewed in the PR.
+- Formulas in plans are math notation; in code every one is written with `checked_*`
+  (`checked_sub`, `checked_div`, `checked_rem`), as `integer_division` and
+  `arithmetic_side_effects` are denied.
 - Tests, benches and test harnesses (`#[cfg(test)]`, `tests/`, `bench/`) may panic, unwrap
   and assert; they start with an explicit `#![allow(...)]` like matchbook's test files,
   including `clippy::float_arithmetic` where they compare against `f64` references.
@@ -40,7 +46,7 @@ takes the decision away from the caller. Production code never panics.
   indexing_slicing = "deny"
   arithmetic_side_effects = "deny"
   integer_division = "deny"
-  float_arithmetic = "deny"          # on-chain and no_std crates
+  float_arithmetic = "deny"          # whole workspace; see below
   panic_in_result_fn = "deny"
   manual_assert = "deny"
   ```

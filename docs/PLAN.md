@@ -367,6 +367,9 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
 
 ## Verified facts (checked 2026-10-28)
 
+- Pinocchio 0.12 entrypoint handlers take `&mut [AccountView]` (quotebook session, compiled in
+  a scratch crate with `unsafe_code = "deny"` and `bytemuck` 1.25 derives).
+
 - `pinocchio` 0.12.0 exposes `pinocchio::sysvars::instructions::Instructions`
   (`try_from(&AccountView)` checks the sysvar address; `load_current_index`,
   `load_instruction_at`, `get_instruction_relative`; `IntrospectedInstruction::
@@ -400,7 +403,6 @@ whenever it is added or touched.
 | `solana-address` | 2.9.0 | `2.9` |
 | `pinocchio-system` | 0.7.0 | `0.7` |
 | `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
-| `pinocchio-associated-token-account` | 0.4.0 | `0.4`, see conflict below |
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |
 | `solana-sdk-ids` | 3.1.0 | `3.1` |
 | `solana-ed25519-program` (SDK, dev) | 3.0.0 | `3.0` |
@@ -409,11 +411,13 @@ whenever it is added or touched.
 | `rust_decimal` (maker, SDK) | 1.43.0 | `1.43` |
 
 **Version conflict, needs a decision before this repo's first program milestone.**
-`pinocchio-token` 0.7.0 and `pinocchio-associated-token-account` 0.4.0 depend on
+`pinocchio-token` 0.7.0 (and `pinocchio-associated-token-account` 0.4.0, which quotebook does
+not need) depend on
 `solana-account-view ^2.0` (the Pinocchio 0.11 generation), while `pinocchio` 0.12.0 depends on
 `solana-account-view` 3.0; `pinocchio-system` 0.7.0 already targets `pinocchio ^0.12`. So the
 latest stable versions of all four cannot be combined today. Options: (a) Pinocchio 0.12 with
-the few token CPIs written in-crate (`transfer_checked`, `mint_to`, `burn`, account creation),
+the one token CPI quotebook needs written in-crate (`transfer_checked`; Token-2022 account
+extensions are already parsed by hand),
 replaced by `pinocchio-token` once a 0.12-compatible release exists; (b) the whole set one
 generation back (Pinocchio 0.11, as matchbook), against the latest-stable rule; (c) wait for the
 companion releases. Proposal: (a), re-checked on crates.io at the start of the milestone.
