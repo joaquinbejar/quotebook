@@ -8,8 +8,7 @@ use quotebook_core::QuotebookError;
 
 use crate::error::custom;
 
-/// Instruction tags. Values not listed are reserved: 2 `set_series_paused` and 6 `settle`
-/// (M3), and a tag for `set_config` (M3).
+/// Instruction tags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Tag {
@@ -17,12 +16,18 @@ pub enum Tag {
     InitConfig = 0,
     /// Create a `Series`. Args: [`CreateSeriesArgs`].
     CreateSeries = 1,
+    /// Pause or resume a series. Args: `paused: u8`.
+    SetSeriesPaused = 2,
     /// Create the signer's `MakerState`. No args.
     InitMaker = 3,
     /// Raise the maker's nonce watermark. Args: `new_min: u64`.
     CancelAll = 4,
     /// Mark one nonce used. Args: `nonce: u64`.
     CancelNonce = 5,
+    /// Fill a signed quote. Args: `sig_ix_index: u8`, `fill_size: u64`.
+    Settle = 6,
+    /// Hand the admin role to another key. Args: `new_admin: [u8; 32]`.
+    SetConfig = 7,
 }
 
 impl Tag {
@@ -39,9 +44,12 @@ impl Tag {
         let tag = match tag {
             0 => Self::InitConfig,
             1 => Self::CreateSeries,
+            2 => Self::SetSeriesPaused,
             3 => Self::InitMaker,
             4 => Self::CancelAll,
             5 => Self::CancelNonce,
+            6 => Self::Settle,
+            7 => Self::SetConfig,
             _ => return Err(custom(QuotebookError::InvalidInstruction)),
         };
         Ok((tag, args))

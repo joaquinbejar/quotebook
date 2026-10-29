@@ -1,8 +1,9 @@
 //! quotebook on-chain program: request-for-quote settlement of ed25519-signed quotes.
 //!
-//! Pinocchio, `no_std`, no allocator. This is milestone 2 of `docs/PLAN.md`: the accounts
-//! (`Config`, `Series`, `MakerState`) and the instructions `init_config`, `create_series`,
-//! `init_maker`, `cancel_all` and `cancel_nonce`. `settle` follows in milestone 3.
+//! Pinocchio, `no_std`, no allocator. Milestones 2 and 3 of `docs/PLAN.md`: the accounts
+//! (`Config`, `Series`, `MakerState`) and every v1 instruction: `init_config`, `set_config`,
+//! `create_series`, `set_series_paused`, `init_maker`, `cancel_all`, `cancel_nonce` and
+//! `settle`.
 
 #![no_std]
 
@@ -13,11 +14,13 @@ pub mod mint;
 pub mod pda;
 pub mod processor;
 pub mod state;
+pub mod tlv;
+pub mod token;
 
 use pinocchio::{AccountView, Address, ProgramResult};
 
 use crate::instruction::Tag;
-use crate::processor::{cancel, create_series, init_config, init_maker};
+use crate::processor::{admin, cancel, create_series, init_config, init_maker, settle};
 
 // The macros expand to the `extern "C"` entrypoint and the target's allocator and panic hooks;
 // that generated code is the only `unsafe` in this crate. `no_allocator!` also defines
@@ -46,5 +49,8 @@ pub fn process_instruction(
         Tag::InitMaker => init_maker::process(program_id, accounts, args),
         Tag::CancelAll => cancel::process_cancel_all(program_id, accounts, args),
         Tag::CancelNonce => cancel::process_cancel_nonce(program_id, accounts, args),
+        Tag::SetSeriesPaused => admin::process_set_series_paused(program_id, accounts, args),
+        Tag::Settle => settle::process(program_id, accounts, args),
+        Tag::SetConfig => admin::process_set_config(program_id, accounts, args),
     }
 }

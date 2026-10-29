@@ -1,9 +1,11 @@
 //! Instruction handlers and the checks they share.
 
+pub mod admin;
 pub mod cancel;
 pub mod create_series;
 pub mod init_config;
 pub mod init_maker;
+pub mod settle;
 
 use pinocchio::error::ProgramError;
 use pinocchio::{AccountView, ProgramResult};
