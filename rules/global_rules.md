@@ -61,6 +61,11 @@ takes the decision away from the caller. Production code never panics.
   `disallowed_macros` is denied. Pinocchio's `no_allocator!` expands to `assert!` (in
   `allocate_unchecked`'s offset helper), so the module that invokes the entrypoint macros
   allows `clippy::disallowed_macros` next to `unsafe_code`, with a comment.
+- `derive(Pod)` on a multi-field struct expands to a compile-time `const _: () = assert!(..)`,
+  which `disallowed_macros` flags, and an item-level `#[allow]` does not reach the generated
+  item. Pod layouts therefore live in small `layout` modules that only declare types, with a
+  module-level `#[allow(clippy::disallowed_macros)]` and a comment; no functions or logic go
+  in them, so the allowance can never cover a runtime assertion.
 - `make lint-control` is the failing control, part of `make pre-push`: a `lint-control`
   workspace member (`publish = false`) whose library code, compiled only under
   `--cfg lint_control`, calls every banned macro through its `core`, `std` and prelude names,
