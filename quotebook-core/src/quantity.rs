@@ -69,7 +69,7 @@ quantity!(
 
 quantity!(
     /// A maker's quote nonce. Makers allocate nonces from a counter; the program accepts each
-    /// at most once (see `NonceWindow`).
+    /// at most once (see [`NonceWindow`](crate::NonceWindow)).
     Nonce(u64),
     Default
 );

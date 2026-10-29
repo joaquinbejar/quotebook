@@ -7,6 +7,7 @@
 //!   [`Side`];
 //! - the signed [`Quote`] and its canonical 208-byte encoding ([`Quote::encode`],
 //!   [`Quote::decode`]);
+//! - the per-maker replay window [`NonceWindow`];
 //! - the program's error codes, [`QuotebookError`].
 //!
 //! This is milestone 1 of `docs/PLAN.md`.
@@ -14,10 +15,12 @@
 #![cfg_attr(not(test), no_std)]
 
 mod error;
+mod nonce;
 mod quantity;
 mod quote;
 
 pub use error::QuotebookError;
+pub use nonce::{NonceWindow, WINDOW_BITS};
 pub use quantity::{
     BaseAtoms, BaseLots, Nonce, QuoteAtoms, QuoteLotsPerBaseLot, SeriesId, Side, UnixTimestamp,
 };
