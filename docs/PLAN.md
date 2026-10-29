@@ -497,6 +497,11 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
 7. **Devnet and docs.** *Done when* the program is deployed to devnet, README and
    `docs/instructions.md` are written, and v0.1 crates are ready to publish (published after
    your go-ahead).
+   Prepared (not deployed): the README now documents the product, architecture, accounts,
+   instructions, quote format, nonce and restart rules, the Token-2022 allowlist, CU and error
+   codes (it takes the place of `docs/instructions.md`); `docs/devnet.md` is the deployment
+   runbook, with what is needed from Joaquin and the RPC tooling still to build (admin CLI,
+   maker binary, taker CLI; a new RPC client dependency to approve).
 
 ## Verified facts (checked 2026-10-28)
 
