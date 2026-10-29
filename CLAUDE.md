@@ -7,6 +7,11 @@ Crates: `quotebook-core` (no_std shared types and encoding), `program`, `sdk`, `
 using `~/Repos/Local/market-maker-rs`). Replay protection: per-maker 16,384-bit nonce ring whose
 `window_base` is also the cancel-all watermark; per-maker delegate PDA.
 
+## Rules
+
+`rules/global_rules.md` is mandatory (shared by the four Solana repos, keep it identical):
+no panics outside tests, latest stable dependencies, checked arithmetic, explicit rounding.
+
 ## Conventions shared with matchbook
 
 - Style reference: `~/Repos/Local/matchbook` (read only). Copy its workspace layout, `rust-toolchain.toml`
@@ -15,13 +20,14 @@ using `~/Repos/Local/market-maker-rs`). Replay protection: per-maker 16,384-bit 
 - On-chain code: Rust, Pinocchio (not Anchor), `no_std`, no allocator, `bytemuck` zero-copy accounts.
   No floating point and no unchecked arithmetic; every rounding is explicit and its direction
   (toward the protocol or toward the user) is documented at the call site.
-- Newtypes for every quantity so the compiler rejects mixing them. No `unwrap`, `expect`, `panic`.
+- Newtypes for every quantity so the compiler rejects mixing them. No panics of any kind outside
+  tests (`panic!`, `unwrap`, `expect`, `assert!`, indexing, unchecked arithmetic).
 - Tests: LiteSVM for programs (Mollusk allowed for instruction-level unit tests), proptest for math.
   Every account-validation rule (signer, owner, PDA seeds, mint, vault) has a negative test with a
   forged account.
 - Every instruction has a measured CU cost in `docs/benchmarks.md`, produced by `make bench`.
-- Cargo dependency requirements as `MAJOR.MINOR`. Verify crate versions and APIs on crates.io or
-  docs.rs before relying on them and cite what was checked.
+- Dependencies at the latest stable version on crates.io, written `MAJOR.MINOR`. Verify versions
+  and APIs on crates.io or docs.rs before relying on them and cite what was checked.
 - `make pre-push` must pass with zero warnings before any push.
 
 ## Git

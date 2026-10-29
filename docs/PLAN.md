@@ -378,6 +378,40 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
 - market-maker-rs 0.6.0 API names as above (`src/strategy/avellaneda_stoikov.rs`,
   `src/strategy/glft.rs`); it uses `rust_decimal::Decimal`.
 
+## Dependencies (latest stable on crates.io, checked 2026-10-29)
+
+Rule from `rules/global_rules.md`: every dependency at the latest stable version, written
+`MAJOR.MINOR`, re-checked via `https://crates.io/api/v1/crates/<name>` (`max_stable_version`)
+whenever it is added or touched.
+
+| Crate | Latest stable | Requirement |
+| --- | --- | --- |
+| `pinocchio` | 0.12.0 | `0.12` |
+| `bytemuck` | 1.25.2 | `1.25` |
+| `proptest` (dev) | 1.12.0 | `1.12` |
+| `litesvm` (dev) | 0.18.1 | `0.18` |
+| `mollusk-svm` (dev, optional) | 0.16.4 | `0.16` |
+| `solana-address` | 2.9.0 | `2.9` |
+| `pinocchio-system` | 0.7.0 | `0.7` |
+| `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
+| `pinocchio-associated-token-account` | 0.4.0 | `0.4`, see conflict below |
+| `litesvm-token` (dev) | 0.18.1 | `0.18` |
+| `solana-sdk-ids` | 3.1.0 | `3.1` |
+| `solana-ed25519-program` (SDK, dev) | 3.0.0 | `3.0` |
+| `solana-instructions-sysvar` (SDK) | 5.0.0 | `5.0` |
+| `market-maker-rs` (maker) | 0.6.0 | `0.6` |
+| `rust_decimal` (maker, SDK) | 1.43.0 | `1.43` |
+
+**Version conflict, needs a decision before this repo's first program milestone.**
+`pinocchio-token` 0.7.0 and `pinocchio-associated-token-account` 0.4.0 depend on
+`solana-account-view ^2.0` (the Pinocchio 0.11 generation), while `pinocchio` 0.12.0 depends on
+`solana-account-view` 3.0; `pinocchio-system` 0.7.0 already targets `pinocchio ^0.12`. So the
+latest stable versions of all four cannot be combined today. Options: (a) Pinocchio 0.12 with
+the few token CPIs written in-crate (`transfer_checked`, `mint_to`, `burn`, account creation),
+replaced by `pinocchio-token` once a 0.12-compatible release exists; (b) the whole set one
+generation back (Pinocchio 0.11, as matchbook), against the latest-stable rule; (c) wait for the
+companion releases. Proposal: (a), re-checked on crates.io at the start of the milestone.
+
 ## 6. Open questions
 
 1. Fees: none in v1, or a taker fee to a treasury from day one?
@@ -386,7 +420,7 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
 4. Open quotes (`taker = 0`): the quotebook session suggests taker-bound by default with open
    quotes allowed. OK?
 5. otc-rfq: copy the two service modules, or extract a shared crate both use?
-6. Pinocchio 0.12 (released 2026-10-28) or 0.11 like matchbook? The quotebook session leans
-   0.11 unless matchbook moves too.
+6. Pinocchio: 0.12 by the latest-stable rule; the `pinocchio-token` conflict above needs your
+   choice of option (a), (b) or (c).
 7. Proposal (from review, pending your approval): no multi-fill instruction in v1; an explicit `sig_ix_index` already
    allows several `settle` instructions (one per maker or leg) in one atomic transaction.
