@@ -8,6 +8,7 @@
 //! - the signed [`Quote`] and its canonical 208-byte encoding ([`Quote::encode`],
 //!   [`Quote::decode`]);
 //! - the per-maker replay window [`NonceWindow`];
+//! - reading the verified quote out of an ed25519 precompile instruction ([`sigverify`]);
 //! - the program's error codes, [`QuotebookError`].
 //!
 //! This is milestone 1 of `docs/PLAN.md`.
@@ -18,6 +19,7 @@ mod error;
 mod nonce;
 mod quantity;
 mod quote;
+pub mod sigverify;
 
 pub use error::QuotebookError;
 pub use nonce::{min_issued_at_beyond_window, NonceWindow, WINDOW_BITS};
