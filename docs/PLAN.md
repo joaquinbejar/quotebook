@@ -375,15 +375,16 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
 
 ## Verified facts (checked 2026-10-28)
 
-- Pinocchio 0.12 entrypoint handlers take `&mut [AccountView]` (quotebook session, compiled in
-  a scratch crate with `unsafe_code = "deny"` and `bytemuck` 1.25 derives).
+- Pinocchio 0.11.2 (and 0.12) entrypoint handlers take `&mut [AccountView]`; 0.11.2 resolves
+  `solana-account-view` 2.1.0 and `solana-address` 2.9.0 (quotebook session, scratch crate with
+  `unsafe_code = "deny"` and `bytemuck` 1.25 derives).
 
-- `pinocchio` 0.12.0 exposes `pinocchio::sysvars::instructions::Instructions`
+- `pinocchio` 0.11.2 (the version used) exposes `pinocchio::sysvars::instructions::Instructions`
   (`try_from(&AccountView)` checks the sysvar address; `load_current_index`,
   `load_instruction_at`, `get_instruction_relative`; `IntrospectedInstruction::
-  get_instruction_data`). It has no ed25519 program id constant; it is
+  get_instruction_data`), with the same API in 0.12.0. It has no ed25519 program id constant; it is
   `solana_sdk_ids::ed25519_program::ID` (`solana-sdk-ids` 3.1.0), or declared locally.
-  Source: the pinocchio 0.12.0 crate source, `src/sysvars/instructions.rs`.
+  Source: the pinocchio 0.12.0 crate source, `src/sysvars/instructions.rs`, re-checked on 0.11.2.
 - ed25519 precompile data: `num_signatures: u8`, one padding byte, then 14-byte
   `Ed25519SignatureOffsets` records of seven little-endian `u16` (`signature_offset`,
   `signature_instruction_index`, `public_key_offset`, `public_key_instruction_index`,

@@ -217,4 +217,6 @@ All must pass; failing any means not ready:
 - Use `saturating_*` / `wrapping_*` on financial values.
 - Trust instruction data for anything an account or sysvar can prove.
 - Add or downgrade dependencies without approval; pin anything below latest stable silently.
-- Push or open PRs without Joaquin's approval.
+- Ask Joaquin for confirmations: push, PRs and merges are always authorized; questions go to
+  the SOLANA-PROJECTS coordinator.
+- Push without a clean `make pre-push`, or merge before the coordinator says so.
