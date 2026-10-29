@@ -319,11 +319,24 @@ slots of nonces `[B, B')` (`min(B' − B, 16,384)` bits), with masked clears on 
 because `B` and `B'` need not be multiples of 64; the model test includes unaligned
 `cancel_all` values. `MakerState.last_cancel_all` tells them apart: a rejected
 `n < window_base` reports `NonceCancelled` when `n < last_cancel_all` and
-`NonceOutOfWindow` otherwise. `cancel_all(new_min)` is the single slide the brief asks for. Because a
-quote's lifetime is bounded by `max_quote_ttl` (proposed 60 s), a maker issuing fewer than
-16,384 quotes per TTL (about 270 per second) never loses a live quote to sliding; the maker
-service enforces that rate. 2 KiB of bitmap costs about 0.015 SOL of rent once; milestone 4
-measures the worst-case slide CU.
+`NonceOutOfWindow` otherwise. `cancel_all(new_min)` is the single slide the brief asks for.
+2 KiB of bitmap costs about 0.015 SOL of rent once; milestone 4 measures the worst-case slide
+CU.
+
+**Issuance bound (corrected in M1 review).** Invariant 4 lets a quote be filled only while
+`issued_at − MAX_CLOCK_SKEW <= now < expires_at`, a span of up to `max_quote_ttl +
+MAX_CLOCK_SKEW` (70 s at 60 s + 10 s), not `max_quote_ttl`. The maker therefore follows:
+*for every nonce `M`, `issued_at(M) >= expires_at(N) + MAX_CLOCK_SKEW` for every `N <= M −
+16,384`* (`quotebook_core::min_issued_at_beyond_window`). Proof sketch: the window drops `N`
+only when some `M >= N + 16,384` is consumed; a `settle` of `M` lands at `t >= issued_at(M) −
+MAX_CLOCK_SKEW >= expires_at(N)`, when `N` is already expired, and `cancel_nonce` /
+`cancel_all` are the maker's own choice. With `issued_at` non-decreasing in the nonce, the rule
+holds if `issued_at(N + 16,384) − issued_at(N) >= max_quote_ttl + MAX_CLOCK_SKEW`: at most
+16,384 nonces per 70 s, about 234 quotes per second. A TTL-only horizon is unsound (codex's
+counterexample: a quote accepted at `now = 0` with `issued_at = 10, expires_at = 70`, then a
+nonce 16,384 stamped 61 s later is fillable at `t = 61` and evicts it); that case is a
+regression test in `quotebook-core/tests/eviction_bound.rs`. The bound uses the maker's
+largest `max_quote_ttl` across the series it quotes, since nonces are per maker.
 
 ### 4.3 Partial fills
 
@@ -398,7 +411,9 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
    signature, and an end-to-end LiteSVM test uses only the SDK.
 6. **Maker service.** *Done when* a local demo (maker service + taker CLI + LiteSVM or
    solana-test-validator) requests, receives and settles a quote priced by market-maker-rs,
-   and the service refuses to exceed the 16,384-per-TTL nonce rate.
+   and the service refuses to stamp a nonce below `min_issued_at_beyond_window` of the quotes
+   16,384 nonces back (section 4.2: at most 16,384 nonces per `max_quote_ttl +
+   MAX_CLOCK_SKEW`).
 7. **Devnet and docs.** *Done when* the program is deployed to devnet, README and
    `docs/instructions.md` are written, and v0.1 crates are ready to publish (published after
    your go-ahead).
