@@ -483,7 +483,11 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
    used, including pre-restart quotes filled during the wait. `max_quote_ttl` is the largest
    lifetime the key ever signed across its series. Cost: a cold start of 70 s at 60 s + 10 s
    with no quotes; persisting the issuer would remove it (not in v1). `NonceIssuer::fresh` is
-   only for a key that has never signed.
+   only for a key that has never signed. `refresh` is allowed only before an issuer's first
+   quote (codex review): once it has quoted, the bound rests on contiguous nonces, and
+   jumping the counter (for instance after the maker `cancel_nonce`s a nonce a window ahead)
+   could evict one of its own live quotes. A live issuer that must move past the chain is
+   replaced by a new `resume`, which pays the cold start.
    **Ticks are exact (codex review of #10).** A `Decimal` quotient rounds to 28 digits before
    any floor or ceiling, which floored 6.9999999999999999999999999999 / 7 to 1 tick.
    `price_to_ticks` now divides the exact integer `mantissa × base_lot × 10^qd` by

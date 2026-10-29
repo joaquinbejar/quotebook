@@ -50,6 +50,10 @@ pub enum IssueError {
         /// The first `issued_at` allowed.
         until: i64,
     },
+    /// `refresh` was called on an issuer that has already issued: jumping its counter would
+    /// break the history the issuance bound relies on. Build a new issuer with `resume`.
+    #[error("refresh is only for an issuer that has not issued yet; resume instead")]
+    AlreadyIssuing,
     /// The quote expires before it is issued, or a counter overflowed.
     #[error("invalid lifetime or counter overflow")]
     Invalid,
@@ -124,19 +128,30 @@ impl NonceIssuer {
         Ok(window.window_base().get().max(above_used))
     }
 
-    /// Applies the maker's on-chain window, read at `read_at`: the next nonce moves above
-    /// every nonce used (it never moves down). After a [`resume`](NonceIssuer::resume), the
-    /// first refresh with `read_at` at or after the cold start's end lets the issuer quote.
+    /// Applies the maker's on-chain window, read at `read_at`, before the first quote: the
+    /// next nonce moves above every nonce used (it never moves down). After a
+    /// [`resume`](NonceIssuer::resume), the first refresh with `read_at` at or after the cold
+    /// start's end lets the issuer quote.
+    ///
+    /// Only before the first [`issue`](NonceIssuer::issue). Once an issuer has quoted, the
+    /// issuance bound rests on its nonces being contiguous: jumping the counter would let a
+    /// new nonce evict one of its own quotes that is still live (for instance after the maker
+    /// `cancel_nonce`s a nonce a window ahead). A live issuer that must move past the chain
+    /// is replaced by a new [`resume`](NonceIssuer::resume), which pays the cold start.
     ///
     /// # Errors
     ///
-    /// `ColdStart` if the issuer is resuming and `read_at` is before the end of the cold start
-    /// (a window read then may miss fills of pre-restart quotes); `Invalid` on overflow.
+    /// `AlreadyIssuing` once the issuer has issued; `ColdStart` if it is resuming and
+    /// `read_at` is before the end of the cold start (a window read then may miss fills of
+    /// pre-restart quotes); `Invalid` on overflow.
     pub fn refresh(
         &mut self,
         window: &NonceWindow,
         read_at: UnixTimestamp,
     ) -> Result<(), IssueError> {
+        if self.issued > 0 {
+            return Err(IssueError::AlreadyIssuing);
+        }
         if let Some(until) = self.not_before {
             if read_at.get() < until {
                 return Err(IssueError::ColdStart { until });
@@ -306,6 +321,24 @@ mod tests {
         fresh_window.cancel_all(Nonce::new(7)).unwrap();
         let issuer = NonceIssuer::resume(&fresh_window, t(0), Seconds::new(60)).unwrap();
         assert_eq!(issuer.peek(), Nonce::new(7));
+    }
+
+    /// Codex's repro of the refresh gap: a live issuer may not jump its counter.
+    #[test]
+    fn test_issuer_refresh_after_issuing_is_refused() {
+        let mut issuer = NonceIssuer::fresh(Nonce::new(0));
+        for n in 0..3 {
+            assert_eq!(issuer.issue(t(0), t(60)).unwrap(), Nonce::new(n));
+        }
+        let mut window = NonceWindow::new();
+        window.consume(Nonce::new(WINDOW_BITS)).unwrap();
+        assert_eq!(window.window_base(), Nonce::new(1));
+        assert_eq!(
+            issuer.refresh(&window, t(0)),
+            Err(IssueError::AlreadyIssuing)
+        );
+        // The counter is untouched: the next nonce is 3, not 16,385.
+        assert_eq!(issuer.issue(t(0), t(60)).unwrap(), Nonce::new(3));
     }
 
     #[test]

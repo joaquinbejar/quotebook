@@ -165,9 +165,9 @@ impl MakerService {
         })
     }
 
-    /// Applies the maker's on-chain window, read at `read_at` (see
-    /// [`NonceIssuer::refresh`]). A resumed service quotes only after a refresh with a window
-    /// read at or after the end of its cold start.
+    /// Applies the maker's on-chain window, read at `read_at`, before the service's first
+    /// quote (see [`NonceIssuer::refresh`]). A resumed service quotes only after a refresh
+    /// with a window read at or after the end of its cold start.
     ///
     /// # Errors
     ///

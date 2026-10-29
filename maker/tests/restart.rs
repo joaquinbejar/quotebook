@@ -271,3 +271,43 @@ fn test_codex_restart_regression() {
         RejectReason::RateLimited
     );
 }
+
+/// Codex's repro of the refresh gap, against the program: a live issuer signs nonces 0, 1, 2;
+/// the maker cancels nonce 16,384 on chain (base moves to 1, nonce 1 still valid); a refresh
+/// of the live issuer is refused, so its next nonce is 3, not 16,385, and nonce 1 still
+/// fills afterwards.
+#[test]
+fn test_codex_refresh_regression() {
+    let mut chain = Chain::new();
+    let maker = chain.maker();
+    let taker = chain.taker();
+    let clock = Clock(Arc::new(AtomicI64::new(NOW)));
+    let live = service(&chain, &maker, NonceIssuer::fresh(Nonce::new(0)), &clock);
+    let quotes: Vec<SignedQuote> = (0..3)
+        .map(|id| quote(&live, &chain, &taker, id).unwrap())
+        .collect();
+    let key = maker.key.insecure_clone();
+    chain
+        .send(
+            &[quotebook_sdk::ix::cancel_nonce(
+                &common::PROGRAM_ID,
+                &key.pubkey(),
+                Nonce::new(WINDOW_BITS),
+            )],
+            &[&key],
+        )
+        .unwrap();
+    let window = chain.window(&maker.key.pubkey());
+    assert_eq!(window.window_base(), Nonce::new(1));
+    assert!(live
+        .refresh_window(&window, UnixTimestamp::new(NOW))
+        .is_err());
+    let next = quote(&live, &chain, &taker, 3).unwrap();
+    assert_eq!(next.quote.terms().nonce, Nonce::new(3));
+    chain
+        .settle(&next, &maker, &taker, BaseLots::new(1))
+        .unwrap();
+    chain
+        .settle(&quotes[1], &maker, &taker, BaseLots::new(1))
+        .unwrap();
+}
