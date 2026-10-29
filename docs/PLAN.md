@@ -384,5 +384,5 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
 5. otc-rfq: copy the two service modules, or extract a shared crate both use?
 6. Pinocchio 0.12 (released 2026-10-28) or 0.11 like matchbook? The quotebook session leans
    0.11 unless matchbook moves too.
-7. Resolved in review: no multi-fill instruction in v1; an explicit `sig_ix_index` already
+7. Proposal (from review, pending your approval): no multi-fill instruction in v1; an explicit `sig_ix_index` already
    allows several `settle` instructions (one per maker or leg) in one atomic transaction.
