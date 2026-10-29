@@ -6,6 +6,7 @@ self-contained (all instruction indexes `0xFFFF`) and the program reads the quot
 Crates: `quotebook-core` (no_std shared types and encoding), `program`, `sdk`, `maker` (std service
 using `~/Repos/Local/market-maker-rs`). Replay protection: per-maker sliding nonce bitmap plus
 `min_valid_nonce` watermark.
+
 ## Conventions shared with matchbook
 
 - Style reference: `~/Repos/Local/matchbook` (read only). Copy its workspace layout, `rust-toolchain.toml`
