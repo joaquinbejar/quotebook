@@ -502,6 +502,14 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
    codes (it takes the place of `docs/instructions.md`); `docs/devnet.md` is the deployment
    runbook, with what is needed from Joaquin and the RPC tooling still to build (admin CLI,
    maker binary, taker CLI; a new RPC client dependency to approve).
+   Tooling built (`cli/`, `quotebook-cli`): `quotebook-admin` (init-config, create-series,
+   pause/resume, set-admin, init-maker, approve, cancel-all, cancel-nonce, show),
+   `quotebook-maker` (reads the series and the maker's window over RPC, resumes fail-closed,
+   keeps its clock on the cluster's and refreshes after the cold start) and `quotebook-taker`
+   (quote: request and check against chain; settle: also send). The quote answer now carries
+   the maker's token accounts, which `settle` needs. Every chain call goes through an `Rpc`
+   trait: `Cluster` on `solana-rpc-client`, LiteSVM in `cli/tests/e2e.rs`, so tests never
+   touch a network.
 
 ## Verified facts (checked 2026-10-28)
 
@@ -555,6 +563,8 @@ whenever it is added or touched.
 | `serde`, `serde_json` (maker) | 1.0.229, 1.0.154 | `1.0`, `1.0` |
 | `tracing`, `tracing-subscriber` (maker; subscriber in the demo only) | 0.1.44, 0.3.23 | `0.1`, `0.3` |
 | `solana-signature` (maker, `verify`) | 3.6.0 (3.5.2 used) | `3.5`: the LiteSVM generation, like `solana-keypair` |
+| `solana-rpc-client` (CLI only) | 4.4.0 (4.3.2 used) | `4.3`: decided by Joaquin (official client, off-chain only, same in every repo). 4.4.0 pulls the agave 4.4 crates LiteSVM 0.18.1 does not build with; 4.3.2 is the newest that resolves with the LiteSVM pins (checked 2026-10-29) |
+| `solana-commitment-config`, `solana-hash` (CLI) | 3.1.1, 4.7.0 (4.6.0 used) | `3.1`, `4.6`: what `solana-rpc-client` 4.3.2 uses |
 | `solana-instruction` (SDK) | 4.0.0 | `3.5`: the SDK's `Instruction` must be LiteSVM's, so it stays on the LiteSVM generation (exception below) |
 
 **LiteSVM pin (M2).** LiteSVM 0.18.1, the latest, requires `solana-address ~2.7` and the
