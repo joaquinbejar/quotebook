@@ -1,0 +1,38 @@
+[package]
+name = "quotebook-program"
+description = "quotebook on-chain program: request-for-quote settlement of ed25519-signed quotes (Pinocchio, no_std)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../README.md"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "quotebook_program"
+
+[dependencies]
+bytemuck = { workspace = true }
+pinocchio = { workspace = true }
+pinocchio-system = { workspace = true }
+quotebook-core = { workspace = true }
+solana-address = { workspace = true, features = ["decode"] }
+
+# On the host (clippy, rustdoc, tests), PDA derivation needs the curve25519 implementation; on
+# SBF it is a syscall.
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+solana-address = { workspace = true, features = ["decode", "curve25519"] }
+
+[dev-dependencies]
+litesvm = { workspace = true }
+solana-account = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
+
+[lints]
+workspace = true

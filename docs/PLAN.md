@@ -226,7 +226,7 @@ fine for RFQ. Rationale in 4.4.
 
 | # | Instruction | Signers | Accounts | Effect |
 | --- | --- | --- | --- | --- |
-| 0 | `init_config` | payer, admin | config (w), system | creates `Config` |
+| 0 | `init_config` | payer, admin | config (w), program_data, system | creates `Config`; admin must be the program's upgrade authority |
 | 0b | `set_config` | admin | config (w) | changes `admin` only |
 | 1 | `create_series` | admin, payer | config (w), series (w), base_mint, quote_mint, system | creates `Series` |
 | 2 | `set_series_paused` | admin | config, series (w) | pause/unpause |
@@ -240,18 +240,40 @@ fine for RFQ. Rationale in 4.4.
 data: the program reads it from the precompile instruction, which avoids a 208-byte copy and
 removes "the settle args and the signed bytes disagree" as a class of bug.
 
+M2 implementation: tags 0 `init_config`, 1 `create_series`, 3 `init_maker`, 4 `cancel_all`
+and 5 `cancel_nonce`; 2 and 6 stay reserved for `set_series_paused` and `settle`, and
+`set_config` gets a free tag in M3. Each handler module (`program/src/processor/`) documents
+its account order. Measured CU per instruction: `docs/benchmarks.md` (`make bench`).
+
 ### 3.3 Security checks per instruction
 
 Every rule below gets a LiteSVM negative test with a forged or swapped account.
 
 - **All:** program accounts owned by quotebook and carrying the right `tag`; PDA addresses
   re-derived from seeds with the stored bump; writable flags as listed.
-- `init_config`: config PDA; admin signs.
+- `init_config`: config PDA; admin signs **and is the program's upgrade authority** (decided in
+  M2: otherwise anyone could front-run `init_config` after deploy and make themselves admin).
+  The instruction takes the program's `ProgramData` account, which must be owned by
+  `BPFLoaderUpgradeab1e11111111111111111111111`, sit at the loader PDA `[program_id]`, and
+  record `admin` as its upgrade authority; a program without an upgrade authority cannot be
+  initialized, so `init_config` runs before any authority is dropped. This assumes deploys
+  through the upgradeable loader; a move to loader-v4 changes where the authority lives and
+  needs a new gate. `deployment_id` must be non-zero.
 - `create_series`: admin signs and equals `config.admin`; series PDA from mints and
   `config.series_count`; mints owned by SPL Token or Token-2022; Token-2022 mints rejected if
   they carry transfer-fee, transfer-hook, confidential-transfer, permanent-delegate,
   non-transferable, pausable or `DefaultAccountState = Frozen` extensions; `base_mint !=
   quote_mint`; lot sizes non-zero.
+  Implemented in M2 as an **allowlist**, stricter than the list above: a Token-2022 mint may
+  carry only `MintCloseAuthority`, `DefaultAccountState` (not `Frozen`),
+  `InterestBearingConfig`, `MetadataPointer`, `TokenMetadata`, `GroupPointer`, `TokenGroup`,
+  `GroupMemberPointer`, `TokenGroupMember` and `ScaledUiAmount`; everything else
+  (`MintExtensionUnsupported`) includes the listed ones, `ConfidentialTransferFeeConfig`,
+  `ConfidentialMintBurn`, `PermissionedBurn`, account-only types and any type added after
+  spl-token-2022-interface 3.1.2. Malformed extension data (non-zero padding, wrong account
+  type, a TLV entry past the end), an uninitialized mint, an SPL Token mint longer than 82
+  bytes and a Token-2022 multisig are `InvalidMint`. Arguments: `max_quote_ttl > 0` and
+  `min_size >= 1`, else `InvalidInstructionData`.
 - Token-2022 account-level extensions at `settle`: a taker account with CPI Guard cannot
   transfer via CPI, and a receiving account with MemoTransfer requires a memo. v1 rejects
   both with a clear error; tests cover each.
@@ -261,6 +283,11 @@ Every rule below gets a LiteSVM negative test with a forged or swapped account.
   `init_maker`) uses transfer to rent-exempt + `allocate` + `assign` when lamports > 0 (check
   matchbook's helper); LiteSVM test with a pre-funded PDA; maker_state PDA from that maker;
   `cancel_all` rejects a non-increasing watermark.
+  Implemented in M2 with `pinocchio_system::create_account_with_minimum_balance_signed`
+  (matchbook has no Pinocchio helper), which does exactly that fallback; creation derives the
+  canonical bump with `find_program_address`, so no second account can exist for the same
+  seeds. `cancel_*` reject another maker's state (`NotAuthority`) and re-derive the PDA from
+  the stored bump with `create_program_address`.
 - `settle`:
   - `taker` signs; it is not the maker (self-trade rejected).
   - `series` owned and tagged, not paused; mints equal the series mints; token programs equal
@@ -454,15 +481,22 @@ whenever it is added or touched.
 | `proptest` (dev) | 1.12.0 | `1.12` |
 | `litesvm` (dev) | 0.18.1 | `0.18` |
 | `mollusk-svm` (dev, optional) | 0.16.4 | `0.16` |
-| `solana-address` | 2.9.0 | `2.9`, `default-features = false`, feature `bytemuck` |
+| `solana-address` | 2.9.0 (2.7.0 used) | `2.7`, `default-features = false`, feature `bytemuck`; exception below |
 | `pinocchio-system` | 0.7.0 (0.6.1 used) | `0.6`, decided exception below |
-| `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
-| `litesvm-token` (dev) | 0.18.1 | `0.18` |
+| `pinocchio-token` | 0.7.0 | `0.7`, see conflict below (not needed until M3) |
+| `litesvm-token` (dev) | 0.18.1 | `0.18` (not needed in M2: test mints are written as raw account data) |
+| `solana-account`, `solana-instruction`, `solana-keypair`, `solana-signer`, `solana-transaction` (dev) | 5.4.0, 4.0.0, 4.0.0, 4.0.0, 6.0.0 | `4.7`, `3.5`, `3.1`, `3.0`, `4.3`: the generations LiteSVM 0.18.1 builds against |
 | `solana-sdk-ids` | 3.1.0 | `3.1` |
 | `solana-ed25519-program` (SDK, dev) | 3.0.0 | `3.0` |
 | `solana-instructions-sysvar` (SDK) | 5.0.0 | `5.0` |
 | `market-maker-rs` (maker) | 0.6.0 | `0.6` |
 | `rust_decimal` (maker, SDK) | 1.43.0 | `1.43` |
+
+**LiteSVM pin (M2).** LiteSVM 0.18.1, the latest, requires `solana-address ~2.7` and the
+Solana client crates of the 4.3 generation; newer releases of those crates (agave 4.4,
+`solana-account` 5) do not compile with it, so the workspace uses `solana-address 2.7` and
+the versions in the row above, and `Cargo.lock` was seeded from optfix's. Same exception as
+optfix; move with LiteSVM.
 
 **Version decision (Joaquin, 2026-10-29): option (b), the Pinocchio 0.11 generation.**
 `pinocchio-token` 0.7.0 and `pinocchio-associated-token-account` 0.4.0 are built on
