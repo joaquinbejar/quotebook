@@ -33,7 +33,11 @@ no panics outside tests, latest stable dependencies, checked arithmetic, explici
 ## Git
 
 - One feature branch per milestone (`feat/m<N>-<name>`), small commits, PR to `main`.
-- Never push without asking Joaquin. Commits are signed (taunais identity via includeIf).
+- Push, opening PRs and merging are always authorized (Joaquin, 2026-10-29); do not ask for
+  confirmation. Never ask Joaquin anything: questions go to the SOLANA-PROJECTS coordinator
+  (`joaquin/s-1836f1d6a089` on the ai-crew-sync bus), which decides or escalates. Merge when the
+  coordinator says so, normally after codex's review is addressed. Commits are signed (taunais
+  identity via includeIf).
 - Worktrees go in `/Users/joaquin/tmp/worktrees/<repo>/<name>`.
 
 ## Plan
