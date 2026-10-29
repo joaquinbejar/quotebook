@@ -1,6 +1,6 @@
 # quotebook: plan
 
-Status: draft for review. Nothing here is implemented yet.
+Status: approved by Joaquin on 2026-10-29. Changes after approval are recorded as decisions.
 
 ## 1. Goal and non-goals
 
@@ -403,13 +403,13 @@ whenever it is added or touched.
 
 | Crate | Latest stable | Requirement |
 | --- | --- | --- |
-| `pinocchio` | 0.12.0 | `0.12` |
+| `pinocchio` | 0.12.0 (0.11.2 used) | `0.11`, decided exception below |
 | `bytemuck` | 1.25.2 | `1.25` |
 | `proptest` (dev) | 1.12.0 | `1.12` |
 | `litesvm` (dev) | 0.18.1 | `0.18` |
 | `mollusk-svm` (dev, optional) | 0.16.4 | `0.16` |
 | `solana-address` | 2.9.0 | `2.9` |
-| `pinocchio-system` | 0.7.0 | `0.7` |
+| `pinocchio-system` | 0.7.0 (0.6.1 used) | `0.6`, decided exception below |
 | `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |
 | `solana-sdk-ids` | 3.1.0 | `3.1` |
@@ -418,17 +418,13 @@ whenever it is added or touched.
 | `market-maker-rs` (maker) | 0.6.0 | `0.6` |
 | `rust_decimal` (maker, SDK) | 1.43.0 | `1.43` |
 
-**Version conflict, needs a decision before this repo's first program milestone.**
-`pinocchio-token` 0.7.0 (and `pinocchio-associated-token-account` 0.4.0, which quotebook does
-not need) depend on
-`solana-account-view ^2.0` (the Pinocchio 0.11 generation), while `pinocchio` 0.12.0 depends on
-`solana-account-view` 3.0; `pinocchio-system` 0.7.0 already targets `pinocchio ^0.12`. So the
-latest stable versions of all four cannot be combined today. Options: (a) Pinocchio 0.12 with
-the one token CPI quotebook needs written in-crate (`transfer_checked`; Token-2022 account
-extensions are already parsed by hand),
-replaced by `pinocchio-token` once a 0.12-compatible release exists; (b) the whole set one
-generation back (Pinocchio 0.11, as matchbook), against the latest-stable rule; (c) wait for the
-companion releases. Proposal: (a), re-checked on crates.io at the start of the milestone.
+**Version decision (Joaquin, 2026-10-29): option (b), the Pinocchio 0.11 generation.**
+`pinocchio-token` 0.7.0 and `pinocchio-associated-token-account` 0.4.0 are built on
+`solana-account-view` 2 (Pinocchio 0.11), while `pinocchio` 0.12.0 uses 3, so the latest
+stable versions cannot be combined. All four repos and matchbook therefore use `pinocchio`
+0.11 (0.11.2) and `pinocchio-system` 0.6 (0.6.1), the newest releases compatible with the
+token crates. This is the documented exception to the latest-stable rule; move all four to
+the 0.12 generation together once 0.12-compatible token crates are released.
 
 ## 6. Open questions
 
@@ -438,7 +434,6 @@ companion releases. Proposal: (a), re-checked on crates.io at the start of the m
 4. Open quotes (`taker = 0`): the quotebook session suggests taker-bound by default with open
    quotes allowed. OK?
 5. otc-rfq: copy the two service modules, or extract a shared crate both use?
-6. Pinocchio: 0.12 by the latest-stable rule; the `pinocchio-token` conflict above needs your
-   choice of option (a), (b) or (c).
+6. Decided (2026-10-29): Pinocchio 0.11 generation (exception above).
 7. Proposal (from review, pending your approval): no multi-fill instruction in v1; an explicit `sig_ix_index` already
    allows several `settle` instructions (one per maker or leg) in one atomic transaction.

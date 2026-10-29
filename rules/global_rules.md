@@ -58,6 +58,10 @@ takes the decision away from the caller. Production code never panics.
 - Always the latest stable version available on crates.io at the time the dependency is
   added or touched. Check `https://crates.io/api/v1/crates/<name>` (`max_stable_version`),
   never rely on memory, and cite the check in the PR.
+- Current recorded exception: the Pinocchio family stays on the 0.11 generation
+  (`pinocchio` 0.11, `pinocchio-system` 0.6, `pinocchio-token` 0.7,
+  `pinocchio-associated-token-account` 0.4) until 0.12-compatible token crates exist; all four
+  repos move together.
 - Requirements written as `MAJOR.MINOR` (`pinocchio = "0.12"`), never `X.Y.Z` and never `*`.
 - When the latest versions of two crates are incompatible (for example a companion crate
   still built for an older core crate), stop and record the conflict in `docs/PLAN.md` with
