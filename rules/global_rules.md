@@ -22,7 +22,8 @@ takes the decision away from the caller. Production code never panics.
 - `overflow-checks = true` stays in the release profile as a last-resort net; the code must
   never rely on it, because hitting it is a panic.
 - Tests, benches and test harnesses (`#[cfg(test)]`, `tests/`, `bench/`) may panic, unwrap
-  and assert; they start with an explicit `#![allow(...)]` like matchbook's test files.
+  and assert; they start with an explicit `#![allow(...)]` like matchbook's test files,
+  including `clippy::float_arithmetic` where they compare against `f64` references.
 - Enforced by lints in `[workspace.lints]`:
   ```toml
   [workspace.lints.rust]

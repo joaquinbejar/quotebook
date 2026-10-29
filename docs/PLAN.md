@@ -48,7 +48,7 @@ pub struct Nonce(pub u64);
 #[repr(u8)]
 pub enum Side { Bid = 0, Ask = 1 }         // the maker's side: Bid = maker buys base
 
-/// What the maker signs. Fixed 192-byte little-endian encoding, defined in one place
+/// What the maker signs. Fixed 208-byte little-endian encoding, defined in one place
 /// (`Quote::encode` / `Quote::decode`), and the program never re-serializes it: it reads the
 /// signed bytes straight out of the precompile instruction. The message may sit at an
 /// unaligned offset in the precompile data, so `decode` uses `pod_read_unaligned` (or reads
@@ -57,7 +57,8 @@ pub enum Side { Bid = 0, Ask = 1 }         // the maker's side: Bid = maker buys
 #[repr(C)]
 pub struct Quote {
     pub domain: [u8; 16],          // b"quotebook-v1\0\0\0\0": domain separation
-    pub program_id: Address,       // binds the signature to this deployment
+    pub program_id: Address,       // binds the signature to this program
+    pub deployment: [u8; 16],      // Config.deployment_id: binds it to one cluster
     pub maker: Address,
     pub series: SeriesId,
     pub taker: Address,            // all zeros = any taker; otherwise only this signer
@@ -68,13 +69,18 @@ pub struct Quote {
     pub issued_at: UnixTimestamp,
     pub expires_at: UnixTimestamp,
     pub nonce: Nonce,
-}   // 16 + 4×32 (program_id, maker, series, taker) + 8 + 5×8 = 192 bytes
+}   // 16 + 32 + 16 + 3×32 (maker, series, taker) + 8 + 5×8 = 208 bytes
 ```
 
 Added beyond the brief's field list, and why (`issued_at` is explained in invariant 4):
 
-- `domain` and `program_id`: a signature for quotebook on devnet, or for another program that
-  happens to sign a similar layout, must not be valid here.
+- `domain` and `program_id`: a signature for another program that happens to sign a similar
+  layout must not be valid here.
+- `deployment`: devnet and mainnet can share the program address, mints and series PDAs, so
+  `program_id` alone does not separate clusters. `Config.deployment_id: [u8; 16]` is set once
+  at `init_config` (distinct per cluster) and is part of the signed bytes; a quote signed for
+  devnet fails on mainnet. Tested with identical keys, program and series on two logical
+  deployments.
 - `taker`: an RFQ answer is meant for the requester. Without it, anyone who sees the quote
   (relay, logs, a leaked WebSocket frame) can fill it first. Zero means "open quote".
 
@@ -203,10 +209,10 @@ fine for RFQ. Rationale in 4.4.
 | 4 | `cancel_all` | maker | maker_state (w) | slides `window_base` to `new_min` (must increase), clearing bits |
 | 5 | `cancel_nonce` | maker | maker_state (w) | marks one nonce used; a nonce beyond the window slides it first |
 | 6 | `settle` | taker | series, maker_state (w), maker (ro), delegate PDA, maker_base (w), maker_quote (w), taker_base (w), taker_quote (w), base_mint, quote_mint, base token program, quote token program, instructions sysvar | verifies and fills |
-| 7 | `close_maker` | maker | maker_state (w), rent receiver (w) | closes the account |
+| 7 | (no `close_maker` in v1) | | | closing would destroy the replay bitmap: re-initializing the same PDA would make already-filled, unexpired quotes fillable again (codex review). `MakerState` is permanent; its rent (~0.015 SOL) is the price of a once-only guarantee |
 
 `settle` data: `{ sig_ix_index: u8, fill_size: u64 }`. The quote itself is not in the settle
-data: the program reads it from the precompile instruction, which avoids a 192-byte copy and
+data: the program reads it from the precompile instruction, which avoids a 208-byte copy and
 removes "the settle args and the signed bytes disagree" as a class of bug.
 
 ### 3.3 Security checks per instruction
@@ -224,7 +230,7 @@ Every rule below gets a LiteSVM negative test with a forged or swapped account.
 - Token-2022 account-level extensions at `settle`: a taker account with CPI Guard cannot
   transfer via CPI, and a receiving account with MemoTransfer requires a memo. v1 rejects
   both with a clear error; tests cover each.
-- `init_maker`, `cancel_*`, `close_maker`: maker signs; maker_state PDA from that maker;
+- `init_maker`, `cancel_*`: maker signs; `init_maker` fails if the PDA already exists; maker_state PDA from that maker;
   `cancel_all` rejects a non-increasing watermark.
 - `settle`:
   - `taker` signs; it is not the maker (self-trade rejected).
@@ -341,7 +347,7 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
    (random fills, cancels, slides against a `BTreeSet` reference) passes, and `make pre-push`
    is clean.
 2. **Program skeleton and accounts.** `init_config`, `create_series`, `init_maker`,
-   `cancel_all`, `cancel_nonce`, `close_maker`, with LiteSVM tests and negative tests for each
+   `cancel_all`, `cancel_nonce`, with LiteSVM tests and negative tests for each
    validation rule. *Done when* every rule in 3.3 for these instructions has a passing forged-
    account test.
 3. **`settle` with signature binding.** *Done when* happy-path fills (both sides, SPL Token and
