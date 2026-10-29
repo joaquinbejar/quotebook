@@ -174,6 +174,14 @@ Derive only what is meaningful. No `Default` where zero is not a valid value.
 - Every account an instruction receives is validated before use: signer, writable, owner
   program, discriminator/tag, PDA re-derived from seeds with the stored bump, expected mint,
   expected vault, expected token program, sysvar address.
+- `init_config` (and any one-time initialization) takes the program's ProgramData account
+  (owner `BPFLoaderUpgradeab1e`, address = PDA of `[program_id]` under that loader) and
+  requires its `upgrade_authority` to sign, so a deployment cannot be front-run. Tests load
+  the program through the upgradeable loader and forge ProgramData (wrong owner, wrong
+  address, other authority, no authority).
+- SBF stack frames stay under 4 KiB. `cargo build-sbf` only warns on an oversized frame and
+  the overflow silently corrupts locals, so the Makefile program target fails on that
+  warning, and large handlers are `#[inline(never)]`.
 - State is updated before any CPI.
 - Clock from the syscall or the verified sysvar, never from instruction data.
 - Every validation rule has a LiteSVM negative test with a forged account (Mollusk allowed for
