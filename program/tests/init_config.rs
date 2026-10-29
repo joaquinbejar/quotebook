@@ -178,11 +178,13 @@ fn test_unknown_tag_and_missing_accounts_are_rejected() {
     let mut env = Env::new();
     let mut ix = init_config_ix(&env.admin.pubkey(), &env.payer.pubkey(), DEPLOYMENT);
     let admin = env.admin.insecure_clone();
-    ix.data = vec![2];
-    assert_ix_err(
-        env.send(&[ix.clone()], &[&admin]),
-        qb(QuotebookError::InvalidInstruction),
-    );
+    for unassigned in [8u8, 255] {
+        ix.data = vec![unassigned];
+        assert_ix_err(
+            env.send(&[ix.clone()], &[&admin]),
+            qb(QuotebookError::InvalidInstruction),
+        );
+    }
     ix.data = vec![];
     assert_ix_err(
         env.send(&[ix.clone()], &[&admin]),

@@ -6,10 +6,11 @@
 //! extension type this program does not know.
 
 use pinocchio::error::ProgramError;
-use pinocchio::{AccountView, Address};
+use pinocchio::{AccountView, Address, ProgramResult};
 use quotebook_core::QuotebookError;
 
 use crate::error::custom;
+use crate::tlv;
 
 /// SPL Token.
 pub const TOKEN_PROGRAM: Address =
@@ -20,11 +21,11 @@ pub const TOKEN_2022_PROGRAM: Address =
     solana_address::address!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
 /// Size of the base `Mint` state.
-const MINT_LEN: usize = 82;
+pub const MINT_LEN: usize = 82;
+/// Offset of `Mint::decimals`.
+pub const MINT_DECIMALS: usize = 44;
 /// Offset of `Mint::is_initialized`.
 const MINT_INITIALIZED: usize = 45;
-/// Token-2022 pads every extended account to the base `Account` size, then the account type.
-const ACCOUNT_TYPE_OFFSET: usize = 165;
 /// `AccountType::Mint`.
 const ACCOUNT_TYPE_MINT: u8 = 1;
 /// A Token-2022 `Multisig` has this length and is never a mint.
@@ -34,7 +35,6 @@ const ACCOUNT_STATE_FROZEN: u8 = 2;
 
 /// Token-2022 `ExtensionType` values (spl-token-2022-interface 3.1.2, `extension/mod.rs`).
 mod ext {
-    pub const UNINITIALIZED: u16 = 0;
     pub const MINT_CLOSE_AUTHORITY: u16 = 3;
     pub const DEFAULT_ACCOUNT_STATE: u16 = 6;
     pub const INTEREST_BEARING_CONFIG: u16 = 10;
@@ -81,37 +81,12 @@ pub fn validate(mint: &AccountView) -> Result<bool, ProgramError> {
 
 /// Checks the padding, account type and TLV extensions of an extended Token-2022 mint.
 fn check_extensions(data: &[u8]) -> Result<(), ProgramError> {
-    let malformed = || custom(QuotebookError::InvalidMint);
-    let padding = data
-        .get(MINT_LEN..ACCOUNT_TYPE_OFFSET)
-        .ok_or_else(malformed)?;
-    if padding.iter().any(|&b| b != 0) {
-        return Err(malformed());
-    }
-    let (account_type, mut tlv) = data
-        .get(ACCOUNT_TYPE_OFFSET..)
-        .and_then(<[u8]>::split_first)
-        .ok_or_else(malformed)?;
-    if *account_type != ACCOUNT_TYPE_MINT {
-        return Err(malformed());
-    }
-    // Same walk as Token-2022: fewer than two bytes left or an `Uninitialized` type ends the
-    // list; a header or value that runs past the data is malformed.
-    while let Some((kind, rest)) = tlv.split_first_chunk::<2>() {
-        let kind = u16::from_le_bytes(*kind);
-        if kind == ext::UNINITIALIZED {
-            break;
-        }
-        let (len, rest) = rest.split_first_chunk::<2>().ok_or_else(malformed)?;
-        let len = usize::from(u16::from_le_bytes(*len));
-        let (value, rest) = rest.split_at_checked(len).ok_or_else(malformed)?;
-        check_extension(kind, value)?;
-        tlv = rest;
-    }
-    Ok(())
+    let malformed = custom(QuotebookError::InvalidMint);
+    let tlv = tlv::extensions(data, MINT_LEN, ACCOUNT_TYPE_MINT, malformed.clone())?;
+    tlv::walk(tlv, malformed, check_extension)
 }
 
-fn check_extension(kind: u16, value: &[u8]) -> Result<(), ProgramError> {
+fn check_extension(kind: u16, value: &[u8]) -> ProgramResult {
     match kind {
         ext::DEFAULT_ACCOUNT_STATE => match value {
             [state] if *state != ACCOUNT_STATE_FROZEN => Ok(()),

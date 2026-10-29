@@ -72,11 +72,16 @@ pub enum QuotebookError {
     MalformedQuote = 128,
     /// `cancel_all` did not raise the nonce watermark.
     WatermarkNotIncreasing = 129,
+    /// The taker is the quote's maker.
+    SelfTrade = 130,
+    /// A token account has an extension `settle` does not support: CPI Guard on the taker's
+    /// paying account, or required memos on a receiving account.
+    AccountExtensionUnsupported = 131,
 }
 
 impl QuotebookError {
     /// Every variant, in discriminant order.
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 32] = [
         Self::InvalidInstruction,
         Self::InvalidInstructionData,
         Self::MissingSignature,
@@ -107,6 +112,8 @@ impl QuotebookError {
         Self::MintExtensionUnsupported,
         Self::MalformedQuote,
         Self::WatermarkNotIncreasing,
+        Self::SelfTrade,
+        Self::AccountExtensionUnsupported,
     ];
 
     /// The custom program error code.
@@ -158,6 +165,8 @@ impl fmt::Display for QuotebookError {
             Self::MintExtensionUnsupported => "unsupported Token-2022 extension",
             Self::MalformedQuote => "quote bytes are not canonical",
             Self::WatermarkNotIncreasing => "cancel_all must raise the nonce watermark",
+            Self::SelfTrade => "the taker is the quote's maker",
+            Self::AccountExtensionUnsupported => "unsupported token account extension",
         };
         f.write_str(text)
     }
@@ -192,7 +201,7 @@ mod tests {
             assert_eq!(QuotebookError::from_code(e.code()), Some(e));
         }
         assert_eq!(QuotebookError::from_code(99), None);
-        assert_eq!(QuotebookError::from_code(130), None);
+        assert_eq!(QuotebookError::from_code(132), None);
     }
 
     #[test]

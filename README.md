@@ -6,17 +6,19 @@ Request-for-quote trading on Solana with quotes signed off chain.
 
 A maker signs a quote off chain; the taker submits it, and the program verifies the ed25519 signature through instruction introspection, checks expiry and nonce, and settles atomically. Cancelling every outstanding quote is one nonce bump.
 
-**Status:** milestone 2 of [docs/PLAN.md](docs/PLAN.md).
+**Status:** milestone 3 of [docs/PLAN.md](docs/PLAN.md).
 
 - `quotebook-core`: the `no_std` crate shared by the program and the clients, with the
-  quantity newtypes, the signed `Quote` and its canonical 208-byte encoding, the per-maker
-  nonce replay window and the program error codes.
+  quantity newtypes, the signed `Quote` and its canonical 208-byte encoding, the parser that
+  reads the verified quote out of the ed25519 precompile instruction, the per-maker nonce
+  replay window and the program error codes.
 - `program`: the Pinocchio program with its accounts (`Config`, `Series`, `MakerState`) and
-  the instructions `init_config`, `create_series`, `init_maker`, `cancel_all` and
-  `cancel_nonce`, tested in LiteSVM. Compute-unit costs are in
+  every v1 instruction: `init_config`, `set_config`, `create_series`, `set_series_paused`,
+  `init_maker`, `cancel_all`, `cancel_nonce` and `settle`, tested in LiteSVM against the real
+  SPL Token, Token-2022 and ed25519 programs. Compute-unit costs are in
   [docs/benchmarks.md](docs/benchmarks.md).
 
-`settle`, the taker SDK and the maker service follow in later milestones.
+The taker SDK and the maker service follow in later milestones.
 
 ## Development
 
