@@ -22,6 +22,7 @@ deployment (milestone 7) is prepared in [docs/devnet.md](docs/devnet.md) and not
 | `quotebook-program` | `program/` | The on-chain program: Pinocchio 0.11, `no_std`, no allocator, zero-copy `Pod` accounts |
 | `quotebook-sdk` | `sdk/` | Rust client SDK: PDAs, a builder for every instruction, the precompile + `settle` pair, account decoders |
 | `quotebook-maker` | `maker/` | Off-chain maker service (market-maker-rs pricing, price bounds, nonce issuance, signing, WebSocket RFQ) and the taker client (request, verify, rank) |
+| `quotebook-cli` | `cli/` | Tools over RPC: `quotebook-admin`, `quotebook-maker` (the service as a binary), `quotebook-taker`; see [docs/devnet.md](docs/devnet.md) |
 
 ```text
  taker                               maker service

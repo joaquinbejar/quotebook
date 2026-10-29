@@ -1,0 +1,57 @@
+[package]
+name = "quotebook-cli"
+description = "quotebook command-line tools over RPC: admin CLI, maker service binary, taker CLI"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../README.md"
+publish = false
+
+[[bin]]
+name = "quotebook-admin"
+path = "src/bin/quotebook-admin.rs"
+# Binaries need no rustdoc; `quotebook-maker` would also collide with the library's.
+doc = false
+
+[[bin]]
+name = "quotebook-maker"
+path = "src/bin/quotebook-maker.rs"
+doc = false
+
+[[bin]]
+name = "quotebook-taker"
+path = "src/bin/quotebook-taker.rs"
+doc = false
+
+[dependencies]
+quotebook-core = { workspace = true }
+quotebook-maker = { path = "../maker", version = "0.1" }
+quotebook-sdk = { workspace = true }
+rust_decimal = { workspace = true }
+solana-account = { workspace = true }
+solana-address = { workspace = true, features = ["decode"] }
+solana-commitment-config = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-rpc-client = { workspace = true }
+solana-sdk-ids = { workspace = true }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+litesvm = { workspace = true, features = ["precompiles"] }
+serde_json = { workspace = true }
+futures-util = { workspace = true }
+tokio-tungstenite = { workspace = true }
+solana-clock = { workspace = true }
+
+[lints]
+workspace = true

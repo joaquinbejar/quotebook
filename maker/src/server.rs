@@ -94,6 +94,10 @@ pub struct ServiceConfig {
     pub ttl: Seconds,
     /// Largest size quoted, in base lots.
     pub max_size: BaseLots,
+    /// The maker's base token account, sent with every quote.
+    pub maker_base: Address,
+    /// The maker's quote token account, sent with every quote.
+    pub maker_quote: Address,
 }
 
 /// Why a service could not be built.
@@ -181,6 +185,12 @@ impl MakerService {
             .lock()
             .map_err(|_| IssueError::Invalid)?
             .refresh(window, read_at)
+    }
+
+    /// The service's settings.
+    #[must_use]
+    pub fn config(&self) -> &ServiceConfig {
+        &self.config
     }
 
     /// The maker's address.
@@ -272,6 +282,8 @@ impl MakerService {
             request_id: id,
             quote: to_hex(&quote.encode()),
             signature: to_hex(&signature),
+            maker_base: self.config.maker_base.to_string(),
+            maker_quote: self.config.maker_quote.to_string(),
         })
     }
 

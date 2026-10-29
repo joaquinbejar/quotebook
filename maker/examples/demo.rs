@@ -72,6 +72,8 @@ pub async fn run() -> Report {
             },
             ttl: Seconds::new(30),
             max_size: BaseLots::new(1_000),
+            maker_base: maker.base,
+            maker_quote: maker.quote,
         };
         let service = MakerService::new(
             MakerKey::new(maker.key.insecure_clone()),
@@ -105,7 +107,16 @@ pub async fn run() -> Report {
     };
     let mut quotes: Vec<SignedQuote> = Vec::new();
     for url in &urls {
-        let q = client::request_quote(url, &request).await.unwrap();
+        let answer = client::request_quote(url, &request).await.unwrap();
+        let maker = makers
+            .iter()
+            .find(|m| m.key.pubkey() == answer.signed.quote.terms().maker)
+            .unwrap();
+        assert_eq!(
+            (answer.maker_base, answer.maker_quote),
+            (maker.base, maker.quote)
+        );
+        let q = answer.signed;
         client::verify(&q, &expected).unwrap();
         quotes.push(q);
     }

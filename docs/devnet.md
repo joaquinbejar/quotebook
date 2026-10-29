@@ -1,8 +1,12 @@
 # quotebook on devnet: runbook
 
 Milestone 7 of [PLAN.md](PLAN.md). **Not deployed yet.** This runbook is the plan for the
-deployment; the steps marked *(to build)* need tooling that does not exist yet (see "Before
-deploying").
+deployment, with the `quotebook-cli` tools (`quotebook-admin`, `quotebook-maker`,
+`quotebook-taker`; `cargo build --release -p quotebook-cli`). Keypair options take file paths;
+the tools print public keys and transaction signatures only. Keep keypair files out of the
+repository (`.gitignore` ignores `keys/` and `*keypair*.json`).
+
+The examples use `QB="--url https://api.devnet.solana.com --program-id <PROGRAM_ID>"`.
 
 ## What is needed from Joaquin
 
@@ -17,17 +21,9 @@ deploying").
 
 ## Before deploying
 
-1. **Tooling (to build, needs approval).** Everything in this repository runs against LiteSVM
-   today. Devnet needs three small binaries on an RPC client, which is a new dependency
-   (`solana-rpc-client`, or plain JSON-RPC over `reqwest`):
-   - `quotebook-cli admin`: `init-config`, `create-series`, `pause`, `set-admin`, built on the
-     SDK's `ix` builders;
-   - `quotebook-maker` (binary): reads the series, mints and the maker's `MakerState` over RPC,
-     builds `MarketInfo`, starts the service with `NonceIssuer::resume`, refreshes it from the
-     chain after the cold start, and serves WebSocket on a configured address;
-   - `quotebook-cli taker`: requests a quote over WebSocket, runs `client::verify` against the
-     series and the cluster clock, and sends the precompile + `settle` pair from the SDK.
-   These need no program change.
+1. **Tools.** `quotebook-cli` (on `solana-rpc-client` 4.3) builds the three binaries. Their
+   logic is tested end to end against the program in LiteSVM through the `Rpc` trait
+   (`cli/tests/e2e.rs`), never against a network.
 2. **Build and check.** On the commit to deploy: `make pre-push`, which builds
    `target/deploy/quotebook_program.so` with the stack-frame check, then `make bench`. Record
    the commit and the `.so` hash (`shasum -a 256 target/deploy/quotebook_program.so`).
@@ -62,10 +58,10 @@ authority's signature, but nothing works until it is done.
    `solana genesis-hash --url devnet` prints it in base58; the SDK's
    `deployment_id_from_genesis_hash` takes the decoded 32 bytes. Quotes signed for devnet then
    fail on any other cluster (`WrongSeries`), even with the same addresses.
-2. *(to build)* `quotebook-cli admin init-config --program-id <PROGRAM_ID> --admin
-   upgrade-authority.json --payer payer.json --deployment-id-from-genesis`.
-3. Check: `Config` at PDA `["config"]` holds the admin and the deployment id; a second
-   `init_config` fails with `AccountAlreadyInitialized`.
+2. `quotebook-admin init-config $QB --admin upgrade-authority.json --payer payer.json` reads
+   the genesis hash over RPC and prints the deployment id it stored.
+3. Check: `quotebook-admin show $QB` prints the admin and the deployment id; a second
+   `init-config` fails with `AccountAlreadyInitialized`.
 
 Do not drop the upgrade authority before `init_config`: a program without one can never be
 initialized (`NotAuthority`).
@@ -75,42 +71,49 @@ initialized (`NotAuthority`).
 1. Pick the mints and parameters (table above). Index 0 for the first series: the PDA is
    `["series", base_mint, quote_mint, series_index_le]`, and the index must equal the config's
    `series_count`.
-2. *(to build)* `quotebook-cli admin create-series --base <BASE_MINT> --quote <QUOTE_MINT>
-   --base-lot <atoms> --quote-lot <atoms> --max-ttl 60 --min-size 1`.
-3. Check: the `Series` account holds the mints, lot sizes, TTL and the copied deployment id;
-   Token-2022 mints outside the allowlist fail with `MintExtensionUnsupported`.
+2. `quotebook-admin create-series $QB --admin upgrade-authority.json --payer payer.json
+   --base <BASE_MINT> --quote <QUOTE_MINT> --base-lot <atoms> --quote-lot <atoms> --max-ttl 60
+   --min-size 1` prints the series address.
+3. Check: `quotebook-admin show-series $QB --series <SERIES>` prints the mints, lot sizes, TTL
+   and minimum; Token-2022 mints outside the allowlist fail with `MintExtensionUnsupported`.
 
 ## 4. Run a maker
 
 1. Fund the maker with SOL, and with base and quote tokens in its token accounts.
-2. *(to build, or the SDK directly)* `init_maker` for the maker key.
+2. `quotebook-admin init-maker $QB --maker maker.json --payer payer.json`.
 3. Approve the maker's delegate PDA `["delegate", maker]` on each account it pays from, with
-   the allowance it is willing to trade. The SPL CLI does it:
-   `spl-token approve <MAKER_TOKEN_ACCOUNT> <AMOUNT> <DELEGATE_PDA> --owner maker.json`. The
-   SDK's `ix::approve_delegate` builds the same instruction, and `pda::delegate` gives the
-   address.
-4. *(to build)* Start `quotebook-maker` with the series, the maker key, a price feed (a fixed
-   mid for the demo; Pyth Hermes is not in v1), the risk parameters, a TTL of at most
-   `max_quote_ttl` and a listen address. It **cold-starts for `max_quote_ttl + 10 s`** (70 s
-   at 60 s) before quoting, then reads the maker's window from chain and refreshes. That is
-   the restart rule: every restart pays it.
+   the allowance it is willing to trade: `quotebook-admin approve $QB --maker maker.json
+   --payer payer.json --account <MAKER_TOKEN_ACCOUNT> --amount <ATOMS>` (the token program is
+   read from the account). `spl-token approve` with the delegate PDA does the same.
+4. Start the service with a fixed mid (Pyth Hermes is not in v1):
+   `quotebook-maker $QB --series <SERIES> --maker maker.json --maker-base <ACCOUNT>
+   --maker-quote <ACCOUNT> --listen 0.0.0.0:9000 --mid 25 --ttl 30` (risk parameters have
+   defaults; `--max-ttl-any-series` must be the longest TTL this key signs on any series and
+   defaults to this series'). It **cold-starts for `max_ttl_any_series + 10 s`** (70 s at
+   60 s): a background thread keeps its clock on the cluster's and, once the cold start is
+   over, reads the maker's window from chain and refreshes the issuer. That is the restart
+   rule: every restart pays it.
 5. Check: a request before the cold start ends is refused with `rate_limited`; after it, the
    service answers with a quote whose nonce is above everything used on chain.
 
 ## 5. Run the taker
 
 1. Fund the taker with SOL and the token it pays in, with token accounts for both mints.
-2. *(to build)* `quotebook-cli taker quote --maker ws://<host>:<port> --series <SERIES> --side
-   buy --size <lots>` requests, verifies and prints the quote; `... taker settle` sends
-   `[ed25519 precompile, settle]` and prints the signature and both balance changes.
+2. `quotebook-taker quote $QB --maker ws://<host>:9000 --series <SERIES> --side buy --size
+   <lots> --taker taker.json` requests the quote, checks it against the series and the
+   cluster clock (signature and every rule `settle` applies) and prints its terms.
+   `quotebook-taker settle ...` with `--taker-base <ACCOUNT> --taker-quote <ACCOUNT>` also
+   sends `[ed25519 precompile, settle]` and prints the transaction signature.
 3. Check: the maker's `MakerState.fills` goes up by one, the nonce is used (a second settle
    fails with `NonceUsed`), and the balances moved by `fill × base_lot_size` and
    `price × fill × quote_lot_size`.
 
 ## 6. After the demo
 
-- `cancel_all` above every issued nonce withdraws the maker's outstanding quotes.
-- `set_series_paused` stops fills on the series without touching makers.
+- `quotebook-admin cancel-all $QB --maker maker.json --payer payer.json --new-min <NONCE>`
+  above every issued nonce withdraws the maker's outstanding quotes (`cancel-nonce` for one).
+- `quotebook-admin pause $QB --admin ... --payer ... --series <SERIES>` stops fills on the
+  series without touching makers (`resume` undoes it).
 - Keep the upgrade authority until the program is final; upgrading keeps every account and
   the program id, so outstanding quotes stay valid across an upgrade.
 - Record the program id, `ProgramData` address, deployed commit, `.so` hash, config and series

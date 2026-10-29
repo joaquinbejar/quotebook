@@ -58,12 +58,23 @@ pub enum ClientError {
     BadSignature,
 }
 
-/// Sends `request` to the maker at `url` (`ws://host:port`) and returns its quote.
+/// A maker's answer: the signed quote and the token accounts `settle` needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Answer {
+    /// The signed quote.
+    pub signed: SignedQuote,
+    /// The maker's base token account.
+    pub maker_base: Address,
+    /// The maker's quote token account.
+    pub maker_quote: Address,
+}
+
+/// Sends `request` to the maker at `url` (`ws://host:port`) and returns its answer.
 ///
 /// # Errors
 ///
 /// `Transport`, `Protocol` or `Rejected`.
-pub async fn request_quote(url: &str, request: &QuoteRequest) -> Result<SignedQuote, ClientError> {
+pub async fn request_quote(url: &str, request: &QuoteRequest) -> Result<Answer, ClientError> {
     let transport =
         |e: tokio_tungstenite::tungstenite::Error| ClientError::Transport(e.to_string());
     let (mut ws, _) = tokio_tungstenite::connect_async(url)
@@ -92,7 +103,15 @@ pub async fn request_quote(url: &str, request: &QuoteRequest) -> Result<SignedQu
             let signature: [u8; 64] = sig
                 .try_into()
                 .map_err(|_| ClientError::Protocol("signature length".into()))?;
-            Ok(SignedQuote { quote, signature })
+            let account = |s: &str| {
+                s.parse::<Address>()
+                    .map_err(|_| ClientError::Protocol("maker account".into()))
+            };
+            Ok(Answer {
+                signed: SignedQuote { quote, signature },
+                maker_base: account(&m.maker_base)?,
+                maker_quote: account(&m.maker_quote)?,
+            })
         }
         ServerMessage::Quote(_) => Err(ClientError::Protocol("answer to another request".into())),
         ServerMessage::Reject(r) => Err(ClientError::Rejected {

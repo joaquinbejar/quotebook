@@ -41,6 +41,11 @@ pub struct QuoteMessage {
     pub quote: String,
     /// The maker's ed25519 signature over those bytes, hex.
     pub signature: String,
+    /// The maker's base token account, base58: `settle` needs it. Not signed: a wrong one
+    /// only makes the taker's transaction fail.
+    pub maker_base: String,
+    /// The maker's quote token account, base58.
+    pub maker_quote: String,
 }
 
 /// Why a request was refused.

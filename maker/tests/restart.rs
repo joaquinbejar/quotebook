@@ -56,6 +56,8 @@ fn service(chain: &Chain, maker: &Maker, issuer: NonceIssuer, clock: &Clock) -> 
             },
             ttl: Seconds::new(30),
             max_size: BaseLots::new(1_000),
+            maker_base: maker.base,
+            maker_quote: maker.quote,
         },
         issuer,
         Box::new(FixedMid(d("25"))),
