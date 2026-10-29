@@ -563,7 +563,7 @@ whenever it is added or touched.
 | `serde`, `serde_json` (maker) | 1.0.229, 1.0.154 | `1.0`, `1.0` |
 | `tracing`, `tracing-subscriber` (maker; subscriber in the demo only) | 0.1.44, 0.3.23 | `0.1`, `0.3` |
 | `solana-signature` (maker, `verify`) | 3.6.0 (3.5.2 used) | `3.5`: the LiteSVM generation, like `solana-keypair` |
-| `solana-rpc-client` (CLI only) | 4.4.0 (4.3.2 used) | `4.3`: decided by Joaquin (official client, off-chain only, same in every repo). 4.4.0 pulls the agave 4.4 crates LiteSVM 0.18.1 does not build with; 4.3.2 is the newest that resolves with the LiteSVM pins (checked 2026-10-29) |
+| `solana-rpc-client` (CLI only) | 4.4.0 (4.3.2 used) | `~4.3` (a tilde, so `cargo update` cannot move it to 4.4; the one exception to the plain `MAJOR.MINOR` form): decided by Joaquin (official client, off-chain only, same in every repo). 4.4.0 pulls the agave 4.4 crates LiteSVM 0.18.1 does not build with; 4.3.2 is the newest that resolves with the LiteSVM pins (checked 2026-10-29) |
 | `solana-commitment-config`, `solana-hash` (CLI) | 3.1.1, 4.7.0 (4.6.0 used) | `3.1`, `4.6`: what `solana-rpc-client` 4.3.2 uses |
 | `solana-instruction` (SDK) | 4.0.0 | `3.5`: the SDK's `Instruction` must be LiteSVM's, so it stays on the LiteSVM generation (exception below) |
 

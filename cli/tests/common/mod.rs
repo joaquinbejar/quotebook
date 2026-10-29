@@ -148,3 +148,69 @@ impl LiteRpc {
         )
     }
 }
+
+/// A chain with the config, one series (6/6 decimals, 0.01 base per lot, 0.0001 quote per lot,
+/// 60 s TTL) and a maker whose base account is approved for its delegate.
+pub struct Setup {
+    pub rpc: LiteRpc,
+    pub admin: Keypair,
+    pub payer: Keypair,
+    pub series: Address,
+    pub base_mint: Address,
+    pub quote_mint: Address,
+    pub maker: Keypair,
+    pub maker_base: Address,
+    pub maker_quote: Address,
+}
+
+pub fn setup() -> Setup {
+    use quotebook_cli::admin;
+    use quotebook_core::instruction::CreateSeriesArgs;
+    let admin_key = Keypair::new();
+    let payer = Keypair::new();
+    let mut rpc = LiteRpc::new(&admin_key.pubkey(), &payer.pubkey());
+    admin::init_config(&mut rpc, &PROGRAM_ID, &admin_key, &payer).unwrap();
+    let base_mint = rpc.mint();
+    let quote_mint = rpc.mint();
+    let args = CreateSeriesArgs {
+        base_lot_size: 10_000,
+        quote_lot_size: 100,
+        max_quote_ttl: 60,
+        min_size: 1,
+    };
+    let (series, _) = admin::create_series(
+        &mut rpc,
+        &PROGRAM_ID,
+        &admin_key,
+        &payer,
+        &base_mint,
+        &quote_mint,
+        &args,
+    )
+    .unwrap();
+    let maker = Keypair::new();
+    rpc.svm.airdrop(&maker.pubkey(), 1_000_000_000).unwrap();
+    admin::init_maker(&mut rpc, &PROGRAM_ID, &maker, &payer).unwrap();
+    let maker_base = rpc.token_account(&base_mint, &maker.pubkey(), 1_000_000_000);
+    let maker_quote = rpc.token_account(&quote_mint, &maker.pubkey(), 1_000_000_000);
+    admin::approve(
+        &mut rpc,
+        &PROGRAM_ID,
+        &maker,
+        &payer,
+        &maker_base,
+        1_000_000_000,
+    )
+    .unwrap();
+    Setup {
+        rpc,
+        admin: admin_key,
+        payer,
+        series,
+        base_mint,
+        quote_mint,
+        maker,
+        maker_base,
+        maker_quote,
+    }
+}

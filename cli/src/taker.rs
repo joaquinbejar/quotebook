@@ -50,7 +50,9 @@ pub async fn ask(url: &str, request: &QuoteRequest) -> Result<Answer, CliError> 
 }
 
 /// Checks `answer` against the series read from chain and the cluster clock: the signature
-/// and every rule `settle` applies to the quote's terms. Returns the market for [`settle`].
+/// and every rule `settle` applies to the quote's terms, then the maker's token accounts,
+/// which come unsigned (program, mint, owner `quote.maker`, state, and the delegate and
+/// allowance on the paying side). Returns the market for [`settle`].
 ///
 /// # Errors
 ///
@@ -76,7 +78,112 @@ pub fn check(
             now,
         },
     )?;
+    check_maker_accounts(rpc, program_id, series, answer, &market, size)?;
     Ok(market)
+}
+
+/// What a maker token account is for in this fill.
+#[derive(Debug, Clone, Copy)]
+enum Leg {
+    /// The maker pays this many atoms from it, through its delegate PDA.
+    Pays(u64),
+    /// The maker receives into it.
+    Receives,
+}
+
+/// The maker's token accounts come with the answer, unsigned. Before building `settle`, check
+/// each one on chain: the mint's token program owns it, it holds the series' mint, the
+/// quote's maker owns it and it is initialized; and the one the maker pays from has the
+/// maker's delegate PDA approved for at least the amount, with the balance to cover it.
+fn check_maker_accounts(
+    rpc: &mut dyn Rpc,
+    program_id: &Address,
+    series: &Address,
+    answer: &Answer,
+    market: &MarketInfo,
+    size: BaseLots,
+) -> Result<(), CliError> {
+    let t = answer.signed.quote.terms();
+    let s = market::series(rpc, program_id, series)?;
+    let overflow = || CliError::Account("fill amount overflows".into());
+    let base = size
+        .get()
+        .checked_mul(market.base_lot_size)
+        .ok_or_else(overflow)?;
+    let quote = u128::from(t.price.get())
+        .checked_mul(u128::from(size.get()))
+        .and_then(|v| v.checked_mul(u128::from(market.quote_lot_size)))
+        .and_then(|v| u64::try_from(v).ok())
+        .ok_or_else(overflow)?;
+    let (base_leg, quote_leg) = match t.side {
+        quotebook_core::Side::Ask => (Leg::Pays(base), Leg::Receives),
+        quotebook_core::Side::Bid => (Leg::Receives, Leg::Pays(quote)),
+    };
+    let delegate = quotebook_sdk::pda::delegate(program_id, &t.maker).0;
+    check_maker_account(
+        rpc,
+        "base",
+        &answer.maker_base,
+        &s.base_mint,
+        &t.maker,
+        &delegate,
+        base_leg,
+    )?;
+    check_maker_account(
+        rpc,
+        "quote",
+        &answer.maker_quote,
+        &s.quote_mint,
+        &t.maker,
+        &delegate,
+        quote_leg,
+    )
+}
+
+fn check_maker_account(
+    rpc: &mut dyn Rpc,
+    which: &str,
+    account: &Address,
+    mint: &Address,
+    maker: &Address,
+    delegate: &Address,
+    leg: Leg,
+) -> Result<(), CliError> {
+    let bad = |why: &str| CliError::Account(format!("maker {which} account {account}: {why}"));
+    let token_program = existing(rpc, mint)?.owner;
+    let a = rpc.account(account)?.ok_or_else(|| bad("does not exist"))?;
+    if a.owner != token_program {
+        return Err(bad("not owned by the mint's token program"));
+    }
+    let field = |range: std::ops::Range<usize>| a.data.get(range);
+    if field(0..32) != Some(mint.as_ref()) {
+        return Err(bad("holds another mint"));
+    }
+    if field(32..64) != Some(maker.as_ref()) {
+        return Err(bad("not owned by the quote's maker"));
+    }
+    if a.data.get(108) != Some(&1) {
+        return Err(bad("not initialized, or frozen"));
+    }
+    if let Leg::Pays(needed) = leg {
+        let u64_at = |range: std::ops::Range<usize>| {
+            field(range)
+                .and_then(|b| <[u8; 8]>::try_from(b).ok())
+                .map(u64::from_le_bytes)
+        };
+        if u64_at(64..72).is_none_or(|amount| amount < needed) {
+            return Err(bad("balance below the fill"));
+        }
+        let has_delegate = field(72..76) == Some(&1u32.to_le_bytes()[..])
+            && field(76..108) == Some(delegate.as_ref());
+        if !has_delegate {
+            return Err(bad("the maker's delegate PDA is not approved"));
+        }
+        if u64_at(121..129).is_none_or(|allowance| allowance < needed) {
+            return Err(bad("delegate allowance below the fill"));
+        }
+    }
+    Ok(())
 }
 
 /// Sends `[ed25519 precompile, settle]` for a checked answer.

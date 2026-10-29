@@ -27,10 +27,11 @@ serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 solana-signature = { version = "3.5", features = ["verify"] }
-# CLI and maker binary only, never core or the program. 4.4.0 is the latest stable but pulls
-# the agave 4.4 crates LiteSVM 0.18.1 does not build with; 4.3 (4.3.2) is the newest that
-# resolves with the LiteSVM pins (checked 2026-10-29).
-solana-rpc-client = "4.3"
+# CLI only, never core or the program. 4.4.0 is the latest stable but pulls the agave 4.4
+# crates LiteSVM 0.18.1 does not build with; 4.3.2 is the newest that resolves with the
+# LiteSVM pins (checked 2026-10-29). `~4.3`, not the caret `4.3`, so `cargo update` cannot move
+# it to 4.4: a documented exception to the plain MAJOR.MINOR form (docs/PLAN.md).
+solana-rpc-client = "~4.3"
 solana-commitment-config = "3.1"
 solana-hash = "4.6"
 # Pinocchio 0.11 generation: decided exception to the latest-stable rule (docs/PLAN.md).
