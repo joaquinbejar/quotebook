@@ -1,5 +1,5 @@
 [workspace]
-members = ["quotebook-core", "lint-control"]
+members = ["quotebook-core", "program", "lint-control"]
 resolver = "2"
 
 [workspace.package]
@@ -13,8 +13,21 @@ repository = "https://github.com/joaquinbejar/quotebook"
 # Versions checked on crates.io (max_stable_version) on 2026-10-29.
 bytemuck = { version = "1.25", default-features = false, features = ["derive", "must_cast", "min_const_generics"] }
 proptest = "1.12"
-solana-address = { version = "2.9", default-features = false, features = ["bytemuck"] }
 quotebook-core = { path = "quotebook-core", version = "0.1" }
+# Pinocchio 0.11 generation: decided exception to the latest-stable rule (docs/PLAN.md).
+pinocchio = { version = "0.11", default-features = false, features = ["cpi"] }
+pinocchio-system = "0.6"
+# LiteSVM 0.18.1 (latest) pins `solana-address ~2.7` and these generations of the Solana client
+# crates, so the workspace uses them; approved exception to the latest-stable rule
+# (docs/PLAN.md, Dependencies), as in optfix.
+solana-address = { version = "2.7", default-features = false, features = ["bytemuck"] }
+litesvm = "0.18"
+solana-account = "4.7"
+solana-instruction = "3.5"
+solana-keypair = "3.1"
+solana-sdk-ids = "3.1"
+solana-signer = "3.0"
+solana-transaction = "4.3"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
