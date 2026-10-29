@@ -1,0 +1,39 @@
+[package]
+name = "quotebook-maker"
+description = "quotebook maker service: prices with market-maker-rs, signs firm quotes, serves takers over WebSocket"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../README.md"
+keywords = ["solana", "rfq", "market-making"]
+categories = ["finance", "cryptography::cryptocurrencies"]
+
+[dependencies]
+futures-util = { workspace = true }
+market-maker-rs = { workspace = true }
+quotebook-core = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+solana-address = { workspace = true, features = ["decode"] }
+solana-keypair = { workspace = true }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+litesvm = { workspace = true, features = ["precompiles"] }
+quotebook-sdk = { workspace = true }
+solana-account = { workspace = true }
+solana-clock = { workspace = true }
+solana-instruction = { workspace = true }
+solana-transaction = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

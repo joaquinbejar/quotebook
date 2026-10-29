@@ -1,5 +1,5 @@
 [workspace]
-members = ["quotebook-core", "program", "sdk", "lint-control"]
+members = ["quotebook-core", "program", "sdk", "maker", "lint-control"]
 resolver = "2"
 
 [workspace.package]
@@ -15,6 +15,18 @@ bytemuck = { version = "1.25", default-features = false, features = ["derive", "
 proptest = "1.12"
 quotebook-core = { path = "quotebook-core", version = "0.1" }
 thiserror = "2.0"
+quotebook-sdk = { path = "sdk", version = "0.1" }
+# Maker service (off-chain), checked on crates.io 2026-10-29.
+market-maker-rs = "0.6"
+rust_decimal = "1.43"
+tokio = { version = "1.54", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
+tokio-tungstenite = "0.30"
+futures-util = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+solana-signature = { version = "3.5", features = ["verify"] }
 # Pinocchio 0.11 generation: decided exception to the latest-stable rule (docs/PLAN.md).
 pinocchio = { version = "0.11", default-features = false, features = ["cpi"] }
 pinocchio-system = "0.6"
