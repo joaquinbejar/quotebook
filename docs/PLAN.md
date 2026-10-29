@@ -233,16 +233,16 @@ fine for RFQ. Rationale in 4.4.
 | 3 | `init_maker` | maker, payer | maker_state (w), system | creates `MakerState` |
 | 4 | `cancel_all` | maker | maker_state (w) | slides `window_base` to `new_min` (must increase), clearing bits |
 | 5 | `cancel_nonce` | maker | maker_state (w) | marks one nonce used; a nonce beyond the window slides it first |
-| 6 | `settle` | taker | series, maker_state (w), maker (ro), delegate PDA, maker_base (w), maker_quote (w), taker_base (w), taker_quote (w), base_mint, quote_mint, base token program, quote token program, instructions sysvar | verifies and fills |
+| 6 | `settle` | taker | series, maker_state (w), delegate PDA, maker_base (w), maker_quote (w), taker_base (w), taker_quote (w), base_mint, quote_mint, base token program, quote token program, instructions sysvar | verifies and fills (M3: the `maker` account is dropped; every check uses `quote.maker`) |
 | 7 | (no `close_maker` in v1) | | | closing would destroy the replay bitmap: re-initializing the same PDA would make already-filled, unexpired quotes fillable again (codex review). `MakerState` is permanent; its rent (~0.015 SOL) is the price of a once-only guarantee. v2 option: a `created_at = now + MAX_CLOCK_SKEW` field checked as `quote.issued_at >= created_at` makes close and re-init safe |
 
 `settle` data: `{ sig_ix_index: u8, fill_size: u64 }`. The quote itself is not in the settle
 data: the program reads it from the precompile instruction, which avoids a 208-byte copy and
 removes "the settle args and the signed bytes disagree" as a class of bug.
 
-M2 implementation: tags 0 `init_config`, 1 `create_series`, 3 `init_maker`, 4 `cancel_all`
-and 5 `cancel_nonce`; 2 and 6 stay reserved for `set_series_paused` and `settle`, and
-`set_config` gets a free tag in M3. Each handler module (`program/src/processor/`) documents
+Tags: 0 `init_config`, 1 `create_series`, 2 `set_series_paused` (`paused: u8`, 0 or 1),
+3 `init_maker`, 4 `cancel_all`, 5 `cancel_nonce`, 6 `settle`, 7 `set_config` (`new_admin:
+[u8; 32]`, non-zero; only the admin changes). Each handler module (`program/src/processor/`) documents
 its account order. Measured CU per instruction: `docs/benchmarks.md` (`make bench`).
 
 ### 3.3 Security checks per instruction
@@ -277,6 +277,11 @@ Every rule below gets a LiteSVM negative test with a forged or swapped account.
 - Token-2022 account-level extensions at `settle`: a taker account with CPI Guard cannot
   transfer via CPI, and a receiving account with MemoTransfer requires a memo. v1 rejects
   both with a clear error; tests cover each.
+  M3: the error is `AccountExtensionUnsupported` (131, appended). CPI Guard is rejected only
+  when enabled on the taker's *paying* account (the owner-signed CPI it forbids); on the
+  maker's paying account (a delegate transfer, which CPI Guard allows) and on receiving
+  accounts it passes. A required memo is rejected only on a receiving account. Both are
+  confirmed against the real Token-2022 program in LiteSVM.
 - `init_maker`, `cancel_*`: maker signs; `init_maker` fails if the PDA is already
   initialized (tag set). Pre-funding grief: anyone can send lamports to a PDA address, which
   makes a plain `create_account` fail, so every PDA creation (`init_config`, `create_series`,
@@ -289,7 +294,8 @@ Every rule below gets a LiteSVM negative test with a forged or swapped account.
   seeds. `cancel_*` reject another maker's state (`NotAuthority`) and re-derive the PDA from
   the stored bump with `create_program_address`.
 - `settle`:
-  - `taker` signs; it is not the maker (self-trade rejected).
+  - `taker` signs; it is not the maker (self-trade rejected: `SelfTrade`, 130, appended in
+    M3).
   - `series` owned and tagged, not paused; mints equal the series mints; token programs equal
     the mints' owners.
   - `maker_state` PDA from `quote.maker`; `maker` account key equals `quote.maker`.
@@ -297,7 +303,12 @@ Every rule below gets a LiteSVM negative test with a forged or swapped account.
     each with the right mint; delegate PDA re-derived from `["delegate", quote.maker]` with
     `MakerState.delegate_bump`.
   - Instructions sysvar address equals the sysvar id (the Pinocchio `Instructions::try_from`
-    check), then the ed25519 checks of 5.1.
+    check), then the ed25519 checks of 5.1. M3: the parsing lives in
+    `quotebook_core::sigverify::verified_quote` (unit-tested off-chain);
+    `sigverify::instruction_data` builds the matching precompile data for clients. The
+    precompile consumes no compute units (measured; it costs one signature in the fee).
+  - "price inside the series' limits" (invariant 6): the series has no price limits in v1,
+    so there is nothing to check beyond `price > 0`.
   - Quote invariants 2 to 7 of section 2.
   - State update (`set bit`, `fills += 1`) before the CPIs, so a re-entrant path cannot reuse
     the nonce (quotebook makes no CPI that can call back, but the order costs nothing).
