@@ -471,9 +471,25 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
    (otc-rfq's `BestPriceStrategy` pattern, on integer ticks). `keys` keeps the key out of
    `Debug` and logs. The demo (`examples/demo.rs`, also run as `tests/demo.rs`) is LiteSVM +
    two maker services + the taker flow, settling the best quote through the SDK. Not in v1,
-   behind traits: a Pyth Hermes feed (`PriceFeed`) and live inventory (`Inventory`); the
-   issuer is not persisted, so a restarted service resumes above its last nonce or sends
-   `cancel_all` first. GLFT and the options feature are not used yet.
+   behind traits: a Pyth Hermes feed (`PriceFeed`) and live inventory (`Inventory`). GLFT and
+   the options feature are not used yet.
+   **Restarts are fail-closed (codex review of #10).** The issuer's history is in memory, and
+   on-chain `check_time` bounds each quote's own lifetime, not whether a later nonce evicts
+   it, so a restarted maker could sign a nonce that evicts a still-valid quote it signed
+   before (reproduced against the program in `maker/tests/restart.rs`).
+   `NonceIssuer::resume` refuses every quote until `started_at + max_quote_ttl +
+   MAX_CLOCK_SKEW` (every pre-restart quote has then expired), and after that until
+   `refresh` applies the on-chain window read from then on, so it starts above every nonce
+   used, including pre-restart quotes filled during the wait. `max_quote_ttl` is the largest
+   lifetime the key ever signed across its series. Cost: a cold start of 70 s at 60 s + 10 s
+   with no quotes; persisting the issuer would remove it (not in v1). `NonceIssuer::fresh` is
+   only for a key that has never signed.
+   **Ticks are exact (codex review of #10).** A `Decimal` quotient rounds to 28 digits before
+   any floor or ceiling, which floored 6.9999999999999999999999999999 / 7 to 1 tick.
+   `price_to_ticks` now divides the exact integer `mantissa × base_lot × 10^qd` by
+   `10^(scale + bd) × quote_lot` in 256-bit integers, rounding the same way at each step
+   (exact for positive integers), with regressions at that scale and a property test against
+   an exact `u128` rational reference.
 7. **Devnet and docs.** *Done when* the program is deployed to devnet, README and
    `docs/instructions.md` are written, and v0.1 crates are ready to publish (published after
    your go-ahead).
