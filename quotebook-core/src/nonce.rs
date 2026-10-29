@@ -239,35 +239,42 @@ impl NonceWindow {
         Ok(())
     }
 
-    /// Clears ring bits `[lo, hi)`, `hi <= WINDOW_BITS`; masks the partial words at both ends.
+    /// Clears ring bits `[lo, hi)`, `hi <= WINDOW_BITS`: masks the partial words at both ends
+    /// and zeroes the whole words between them with one `fill`.
     fn clear_linear(&mut self, lo: u64, hi: u64) -> Result<(), QuotebookError> {
         if lo >= hi {
             return Ok(());
         }
         let ovf = || QuotebookError::Overflow;
-        let first_word = lo.checked_div(WORD_BITS).ok_or_else(ovf)?;
-        let last_word = hi
-            .checked_sub(1)
-            .and_then(|h| h.checked_div(WORD_BITS))
-            .ok_or_else(ovf)?;
-        let words = last_word
-            .checked_sub(first_word)
-            .and_then(|d| d.checked_add(1))
-            .ok_or_else(ovf)?;
-        let skip = usize::try_from(first_word).map_err(|_| ovf())?;
-        let take = usize::try_from(words).map_err(|_| ovf())?;
-        for (index, word) in self.used.iter_mut().enumerate().skip(skip).take(take) {
-            let word_lo = u64::try_from(index)
-                .ok()
-                .and_then(|i| i.checked_mul(WORD_BITS))
-                .ok_or_else(ovf)?;
-            let word_hi = word_lo.checked_add(WORD_BITS).ok_or_else(ovf)?;
-            let from = lo.max(word_lo).checked_sub(word_lo).ok_or_else(ovf)?;
-            let to = hi.min(word_hi).checked_sub(word_lo).ok_or_else(ovf)?;
-            *word &= !(low_bits(to)? & !low_bits(from)?);
+        let last_bit = hi.checked_sub(1).ok_or_else(ovf)?;
+        let first = word_index(lo)?;
+        let last = word_index(last_bit)?;
+        // Bits of `first` below `lo` and bits of `last` above `last_bit` stay.
+        let keep_low = low_bits(lo & WORD_MASK)?;
+        let keep_high = !low_bits((last_bit & WORD_MASK).checked_add(1).ok_or_else(ovf)?)?;
+        if first == last {
+            let word = self.used.get_mut(first).ok_or_else(ovf)?;
+            *word &= keep_low | keep_high;
+            return Ok(());
         }
+        let (head, rest) = self
+            .used
+            .get_mut(first..=last)
+            .and_then(<[u64]>::split_first_mut)
+            .ok_or_else(ovf)?;
+        *head &= keep_low;
+        let (tail, between) = rest.split_last_mut().ok_or_else(ovf)?;
+        *tail &= keep_high;
+        between.fill(0);
         Ok(())
     }
+}
+
+/// The ring word holding slot `slot`.
+fn word_index(slot: u64) -> Result<usize, QuotebookError> {
+    slot.checked_div(WORD_BITS)
+        .and_then(|w| usize::try_from(w).ok())
+        .ok_or(QuotebookError::Overflow)
 }
 
 /// A mask of the `k` lowest bits, `k <= 64`.
