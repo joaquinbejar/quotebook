@@ -77,8 +77,11 @@ Added beyond the brief's field list, and why (`issued_at` is explained in invari
 - `domain` and `program_id`: a signature for another program that happens to sign a similar
   layout must not be valid here.
 - `deployment`: devnet and mainnet can share the program address, mints and series PDAs, so
-  `program_id` alone does not separate clusters. `Config.deployment_id: [u8; 16]` is set once
-  at `init_config` (distinct per cluster) and is part of the signed bytes; a quote signed for
+  `program_id` alone does not separate clusters. `Config.deployment_id: [u8; 16]` is the first 16
+  bytes of the cluster's genesis hash, set once at `init_config` and never changed; it is
+  copied into each `Series` at `create_series`, and `settle` compares `quote.deployment`
+  against `series.deployment_id` (no extra account). The SDK and the maker service read it
+  from chain and check it against `getGenesisHash`, never from a config file; a quote signed for
   devnet fails on mainnet. Tested with identical keys, program and series on two logical
   deployments.
 - `taker`: an RFQ answer is meant for the requester. Without it, anyone who sees the quote
@@ -163,17 +166,17 @@ and are `bytemuck::Pod`, loaded zero-copy.
 
 | Account | Seeds | Owner | Size | Written by |
 | --- | --- | --- | --- | --- |
-| `Config` | `["config"]` | quotebook | 8 + 32 + 8 = 48 | `init_config`, `set_config` (admin) |
-| `Series` | `["series", base_mint, quote_mint, series_index_le]` | quotebook | 128 | `create_series`, `set_series_paused` |
+| `Config` | `["config"]` | quotebook | 8 + 32 + 8 + 16 = 64 | `init_config`, `set_config` (admin; never `deployment_id`) |
+| `Series` | `["series", base_mint, quote_mint, series_index_le]` | quotebook | 144 | `create_series`, `set_series_paused` |
 | `MakerState` | `["maker", maker]` | quotebook | 8 + 32 + 8×3 + 8 + 2,048 = 2,120 | `init_maker`, `cancel_all`, `cancel_nonce`, `settle` |
 | Delegate authority | `["delegate", maker]` | none (PDA, no data) | 0 | never; signs that maker's token transfers |
 
 Field sketches:
 
 ```rust
-struct Config { hdr: Hdr, admin: Address, series_count: u64 }
+struct Config { hdr: Hdr, admin: Address, series_count: u64, deployment_id: [u8; 16] }
 struct Series {
-    hdr: Hdr, series_index: u64, base_mint: Address, quote_mint: Address,
+    hdr: Hdr, series_index: u64, deployment_id: [u8; 16], base_mint: Address, quote_mint: Address,
     base_lot_size: u64, quote_lot_size: u64, max_quote_ttl: i64, min_size: u64,
     paused: u8, base_is_2022: u8, quote_is_2022: u8, _pad: [u8; 5],
     _reserved: [u8; 8],   // fee bps later
@@ -203,13 +206,14 @@ fine for RFQ. Rationale in 4.4.
 | # | Instruction | Signers | Accounts | Effect |
 | --- | --- | --- | --- | --- |
 | 0 | `init_config` | payer, admin | config (w), system | creates `Config` |
+| 0b | `set_config` | admin | config (w) | changes `admin` only |
 | 1 | `create_series` | admin, payer | config (w), series (w), base_mint, quote_mint, system | creates `Series` |
 | 2 | `set_series_paused` | admin | config, series (w) | pause/unpause |
 | 3 | `init_maker` | maker, payer | maker_state (w), system | creates `MakerState` |
 | 4 | `cancel_all` | maker | maker_state (w) | slides `window_base` to `new_min` (must increase), clearing bits |
 | 5 | `cancel_nonce` | maker | maker_state (w) | marks one nonce used; a nonce beyond the window slides it first |
 | 6 | `settle` | taker | series, maker_state (w), maker (ro), delegate PDA, maker_base (w), maker_quote (w), taker_base (w), taker_quote (w), base_mint, quote_mint, base token program, quote token program, instructions sysvar | verifies and fills |
-| 7 | (no `close_maker` in v1) | | | closing would destroy the replay bitmap: re-initializing the same PDA would make already-filled, unexpired quotes fillable again (codex review). `MakerState` is permanent; its rent (~0.015 SOL) is the price of a once-only guarantee |
+| 7 | (no `close_maker` in v1) | | | closing would destroy the replay bitmap: re-initializing the same PDA would make already-filled, unexpired quotes fillable again (codex review). `MakerState` is permanent; its rent (~0.015 SOL) is the price of a once-only guarantee. v2 option: a `created_at = now + MAX_CLOCK_SKEW` field checked as `quote.issued_at >= created_at` makes close and re-init safe |
 
 `settle` data: `{ sig_ix_index: u8, fill_size: u64 }`. The quote itself is not in the settle
 data: the program reads it from the precompile instruction, which avoids a 208-byte copy and
@@ -230,7 +234,11 @@ Every rule below gets a LiteSVM negative test with a forged or swapped account.
 - Token-2022 account-level extensions at `settle`: a taker account with CPI Guard cannot
   transfer via CPI, and a receiving account with MemoTransfer requires a memo. v1 rejects
   both with a clear error; tests cover each.
-- `init_maker`, `cancel_*`: maker signs; `init_maker` fails if the PDA already exists; maker_state PDA from that maker;
+- `init_maker`, `cancel_*`: maker signs; `init_maker` fails if the PDA is already
+  initialized (tag set). Pre-funding grief: anyone can send lamports to a PDA address, which
+  makes a plain `create_account` fail, so every PDA creation (`init_config`, `create_series`,
+  `init_maker`) uses transfer to rent-exempt + `allocate` + `assign` when lamports > 0 (check
+  matchbook's helper); LiteSVM test with a pre-funded PDA; maker_state PDA from that maker;
   `cancel_all` rejects a non-increasing watermark.
 - `settle`:
   - `taker` signs; it is not the maker (self-trade rejected).
