@@ -28,6 +28,7 @@ use pinocchio::sysvars::instructions::{Instructions, INSTRUCTIONS_ID};
 use pinocchio::sysvars::Sysvar;
 use pinocchio::{Address, ProgramResult};
 use pinocchio_token::instructions::TransferChecked;
+use quotebook_core::instruction::SettleArgs;
 use quotebook_core::{sigverify, BaseLots, Quote, QuotebookError, Side, UnixTimestamp};
 
 use super::signer;
@@ -40,28 +41,6 @@ use crate::token::{self, Role};
 /// The ed25519 signature-verification precompile.
 pub const ED25519_PROGRAM: Address =
     solana_address::address!("Ed25519SigVerify111111111111111111111111111");
-
-/// Decoded `settle` arguments.
-struct Args {
-    sig_ix_index: u8,
-    fill_size: BaseLots,
-}
-
-fn decode(args: &[u8]) -> Result<Args, ProgramError> {
-    let args: &[u8; 9] = args
-        .try_into()
-        .map_err(|_| custom(QuotebookError::InvalidInstructionData))?;
-    let (index, size) = args
-        .split_first()
-        .ok_or(custom(QuotebookError::InvalidInstructionData))?;
-    let size: [u8; 8] = size
-        .try_into()
-        .map_err(|_| custom(QuotebookError::InvalidInstructionData))?;
-    Ok(Args {
-        sig_ix_index: *index,
-        fill_size: BaseLots::new(u64::from_le_bytes(size)),
-    })
-}
 
 /// Reads the quote the precompile verified at `index`, which must precede this instruction.
 fn verified_quote(sysvar: &AccountView, index: u8) -> Result<Quote, ProgramError> {
@@ -155,7 +134,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
-    let args = decode(args)?;
+    let args = SettleArgs::decode(args).map_err(custom)?;
     signer(taker)?;
 
     // 1. The quote the precompile verified, signed by `quote.maker`.

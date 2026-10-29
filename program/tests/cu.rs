@@ -21,7 +21,13 @@
 
 mod common;
 
+use std::cell::Cell;
 use std::fmt::Write as _;
+
+thread_local! {
+    /// Fees, in lamports, of the precompile-only transaction and of a settle transaction.
+    static FEES: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+}
 
 use common::*;
 use quotebook_core::{Nonce, Side, WINDOW_BITS};
@@ -151,66 +157,112 @@ fn measure() -> Vec<Row> {
         cu,
     });
 
-    for (note, spec, side) in [
-        (
-            "SPL Token both legs, maker bid",
-            MarketSpec::default(),
-            Side::Bid,
-        ),
-        (
-            "SPL Token both legs, maker ask",
-            MarketSpec::default(),
-            Side::Ask,
-        ),
-        (
-            "Token-2022 both legs (ImmutableOwner accounts), maker bid",
-            MarketSpec {
-                base_2022: true,
-                quote_2022: true,
-                maker_base_ext: tlv(7, &[]),
-                maker_quote_ext: tlv(7, &[]),
-                taker_base_ext: tlv(7, &[]),
-                taker_quote_ext: tlv(7, &[]),
-            },
-            Side::Bid,
-        ),
-    ] {
+    // settle: the common case, then the worst case per token program. The worst case is a
+    // fill whose nonce slides the window by 16,383 nonces from an unaligned base (the largest
+    // ring clear), on whichever side costs more; for Token-2022 every mint carries the allowed
+    // extensions and every token account the account extensions settle walks.
+    // Every allowlisted mint extension, taken from the program's own list so a new entry is
+    // measured too; values at realistic sizes (unknown types get 64 bytes).
+    let heavy_mint: Vec<u8> = quotebook_program::mint::ALLOWED_EXTENSIONS
+        .iter()
+        .flat_map(|&kind| {
+            let value = match kind {
+                6 => vec![1], // DefaultAccountState = Initialized
+                3 => vec![0; 32],
+                10 => vec![0; 52],
+                19 => vec![0; 200],
+                21 => vec![0; 80],
+                23 => vec![0; 72],
+                25 => vec![0; 56],
+                _ => vec![0; 64],
+            };
+            tlv(kind, &value)
+        })
+        .collect();
+    let heavy_account = [tlv(7, &[]), tlv(11, &[0]), tlv(8, &[0])].concat();
+    let token_2022 = MarketSpec {
+        base_2022: true,
+        quote_2022: true,
+        base_mint_ext: heavy_mint.clone(),
+        quote_mint_ext: heavy_mint,
+        maker_base_ext: heavy_account.clone(),
+        maker_quote_ext: heavy_account.clone(),
+        taker_base_ext: heavy_account.clone(),
+        taker_quote_ext: heavy_account,
+    };
+    let settle = |spec: MarketSpec, side: Side, slide: bool| -> (u64, u64) {
         let mut m = Market::with(spec);
         let mut t = m.terms();
         t.side = side;
+        if slide {
+            let maker = m.maker.insecure_clone();
+            let state = maker_state_address(&maker.pubkey());
+            m.env
+                .send(
+                    &[cancel_ix(tag::CANCEL_ALL, &maker.pubkey(), &state, 37)],
+                    &[&maker],
+                )
+                .unwrap();
+            t.nonce = Nonce::new(37 + 2 * WINDOW_BITS - 1);
+        }
+        let meta = m.settle(t, 5).unwrap();
+        (meta.compute_units_consumed, meta.fee)
+    };
+    for (note, side) in [
+        ("SPL Token both legs, maker bid", Side::Bid),
+        ("SPL Token both legs, maker ask", Side::Ask),
+    ] {
         rows.push(Row {
             name: "settle",
             note,
-            cu: m.settle(t, 5).unwrap().compute_units_consumed,
+            cu: settle(MarketSpec::default(), side, false).0,
         });
     }
-    // The precompile alone, to show what it adds to a settle transaction.
+    let worst = |spec: &MarketSpec| {
+        [Side::Bid, Side::Ask]
+            .into_iter()
+            .map(|side| settle(spec.clone(), side, true).0)
+            .max()
+            .unwrap()
+    };
+    rows.push(Row {
+        name: "settle",
+        note: "SPL Token, worst case (16,383-nonce unaligned slide, costlier side)",
+        cu: worst(&MarketSpec::default()),
+    });
+    rows.push(Row {
+        name: "settle",
+        note: "Token-2022 both legs, plain accounts, maker bid",
+        cu: settle(
+            MarketSpec {
+                base_2022: true,
+                quote_2022: true,
+                ..MarketSpec::default()
+            },
+            Side::Bid,
+            false,
+        )
+        .0,
+    });
+    rows.push(Row {
+        name: "settle",
+        note: "Token-2022, worst case (as SPL, plus every allowlisted mint extension and three account extensions)",
+        cu: worst(&token_2022),
+    });
+
+    // The precompile alone, and what it adds to the fee.
     let m = Market::new();
     let maker = m.maker.insecure_clone();
     let pre = m.precompile(m.terms(), &maker);
     let mut env = m.env;
+    let meta = env.send(&[pre], &[]).unwrap();
     rows.push(Row {
         name: "ed25519 precompile",
         note: "one signature over a 208-byte quote, alone in a transaction",
-        cu: env.send(&[pre], &[]).unwrap().compute_units_consumed,
+        cu: meta.compute_units_consumed,
     });
-    // A fill that slides the window by 16,383 nonces from an unaligned base, wrapping.
-    let mut m = Market::new();
-    let maker = m.maker.insecure_clone();
-    let state = maker_state_address(&maker.pubkey());
-    m.env
-        .send(
-            &[cancel_ix(tag::CANCEL_ALL, &maker.pubkey(), &state, 37)],
-            &[&maker],
-        )
-        .unwrap();
-    let mut t = m.terms();
-    t.nonce = Nonce::new(37 + 2 * WINDOW_BITS - 1);
-    rows.push(Row {
-        name: "settle",
-        note: "SPL Token, nonce slides 16,383 nonces (worst case)",
-        cu: m.settle(t, 5).unwrap().compute_units_consumed,
-    });
+    let (_, settle_fee) = settle(MarketSpec::default(), Side::Bid, false);
+    FEES.with(|f| f.set((meta.fee, settle_fee)));
     rows
 }
 
@@ -236,8 +288,45 @@ fn table(rows: &[Row]) -> String {
     for r in rows {
         writeln!(out, "| `{}` | {} | {} |", r.name, r.note, r.cu).unwrap();
     }
+    let (precompile_fee, settle_fee) = FEES.with(Cell::get);
+    // The text below claims 5,000 lamports per signature, the precompile's included.
+    assert_eq!((precompile_fee, settle_fee), (2 * 5_000, 3 * 5_000));
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "The precompile's 0 CU is not free: the runtime charges each precompile signature like \
+         a transaction signature. A precompile-only transaction signed by its fee payer pays \
+         {precompile_fee} lamports (two signatures); a `settle` transaction signed by the fee \
+         payer and the taker pays {settle_fee} lamports (three signatures). Priority fees come \
+         on top, priced per compute unit the transaction requests."
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    out.push_str(MATCHBOOK);
     out
 }
+
+/// Cross-repo citation (docs/PLAN.md, M4), not a run in this VM.
+const MATCHBOOK: &str = "## Comparison with matchbook (cited, not run here)
+
+matchbook's own LiteSVM bench, `docs/benchmarks.md` at matchbook commit `72efa6d` (branch
+`redesign`), reports:
+
+| matchbook operation | CU |
+| --- | ---: |
+| IOC, 1 fill | 1,660 |
+| Swap from a wallet, no account, 1 fill | 4,487 |
+
+Reproduce in matchbook: `cargo build-sbf --manifest-path program/Cargo.toml` then
+`cargo test -p matchbook-program --test bench -- --nocapture`.
+
+The designs differ, so the numbers answer different questions. matchbook is an order book:
+both sides deposit into the program first, and an IOC fill moves balances inside its own
+accounts without a token CPI; its wallet swap adds the token transfers. quotebook has no
+deposits and no book: a `settle` verifies a maker-signed RFQ quote and moves both legs with
+two token-program CPIs from the parties' wallets, so the nearest matchbook figure is the
+wallet swap. This is a citation from another repository's bench, not a same-VM measurement.
+";
 
 #[test]
 fn test_cu_table_is_deterministic() {

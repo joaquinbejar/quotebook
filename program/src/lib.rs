@@ -42,7 +42,7 @@ pub fn process_instruction(
     accounts: &mut [AccountView],
     data: &[u8],
 ) -> ProgramResult {
-    let (tag, args) = Tag::split(data)?;
+    let (tag, args) = Tag::split(data).map_err(error::custom)?;
     match tag {
         Tag::InitConfig => init_config::process(program_id, accounts, args),
         Tag::CreateSeries => create_series::process(program_id, accounts, args),

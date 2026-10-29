@@ -9,13 +9,17 @@
 //!   [`Quote::decode`]);
 //! - the per-maker replay window [`NonceWindow`];
 //! - reading the verified quote out of an ed25519 precompile instruction ([`sigverify`]);
+//! - the program's account layouts ([`accounts`]) and instruction encodings
+//!   ([`instruction`]);
 //! - the program's error codes, [`QuotebookError`].
 //!
 //! This is milestone 1 of `docs/PLAN.md`.
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod accounts;
 mod error;
+pub mod instruction;
 mod nonce;
 mod quantity;
 mod quote;

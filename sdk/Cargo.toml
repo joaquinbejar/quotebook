@@ -1,0 +1,31 @@
+[package]
+name = "quotebook-sdk"
+description = "Rust client SDK for quotebook: instruction builders, PDAs and account decoding"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../README.md"
+keywords = ["solana", "rfq", "sdk"]
+categories = ["finance", "cryptography::cryptocurrencies"]
+
+[dependencies]
+quotebook-core = { workspace = true }
+solana-address = { workspace = true, features = ["curve25519", "decode"] }
+# The 3.5 generation LiteSVM uses, so SDK instructions go straight into the same VM; exception
+# to the latest-stable rule recorded in docs/PLAN.md (Dependencies).
+solana-instruction = { workspace = true }
+solana-sdk-ids = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+litesvm = { workspace = true, features = ["precompiles"] }
+solana-account = { workspace = true }
+solana-clock = { workspace = true }
+solana-keypair = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
+
+[lints]
+workspace = true

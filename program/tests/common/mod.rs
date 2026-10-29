@@ -496,6 +496,8 @@ pub const FUNDS: u64 = 1_000_000_000_000;
 pub struct MarketSpec {
     pub base_2022: bool,
     pub quote_2022: bool,
+    pub base_mint_ext: Vec<u8>,
+    pub quote_mint_ext: Vec<u8>,
     pub maker_base_ext: Vec<u8>,
     pub maker_quote_ext: Vec<u8>,
     pub taker_base_ext: Vec<u8>,
@@ -520,9 +522,9 @@ impl Market {
         };
         let (base_program, quote_program) = (program(spec.base_2022), program(spec.quote_2022));
         let base_mint = Keypair::new().pubkey();
-        env.set(base_mint, base_program, mint_data(&[]));
+        env.set(base_mint, base_program, mint_data(&spec.base_mint_ext));
         let quote_mint = Keypair::new().pubkey();
-        env.set(quote_mint, quote_program, mint_data(&[]));
+        env.set(quote_mint, quote_program, mint_data(&spec.quote_mint_ext));
         let (series, _) = env.create_series_with(&base_mint, &quote_mint);
         let maker = env.maker();
         let taker = Keypair::new();

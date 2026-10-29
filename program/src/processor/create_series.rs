@@ -35,7 +35,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
     let [admin, payer, config, series, base_mint, quote_mint, system, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
-    let args = CreateSeriesArgs::decode(args)?;
+    let args = CreateSeriesArgs::decode(args).map_err(custom)?;
     signer(admin)?;
     signer(payer)?;
     writable(payer)?;

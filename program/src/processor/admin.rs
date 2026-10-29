@@ -19,6 +19,7 @@ use quotebook_core::QuotebookError;
 
 use super::signer;
 use crate::error::custom;
+use crate::instruction::{decode_new_admin, decode_paused};
 use crate::pda;
 use crate::state::{self, Config, Series, CONFIG_SEED, SERIES_SEED};
 
@@ -56,16 +57,11 @@ pub fn process_set_config(
     let [admin, config, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
-    let new_admin: [u8; 32] = args
-        .try_into()
-        .map_err(|_| custom(QuotebookError::InvalidInstructionData))?;
-    if new_admin == [0; 32] {
-        return Err(custom(QuotebookError::InvalidInstructionData));
-    }
+    let new_admin = decode_new_admin(args).map_err(custom)?;
     let config_address = *config.address();
     let mut c = state::load_mut::<Config>(config, program_id)?;
     check_admin(admin, &c, &config_address, program_id)?;
-    c.admin = Address::new_from_array(new_admin);
+    c.admin = new_admin;
     Ok(())
 }
 
@@ -84,10 +80,7 @@ pub fn process_set_series_paused(
     let [admin, config, series, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
-    let paused = match args {
-        [p @ (0 | 1)] => *p,
-        _ => return Err(custom(QuotebookError::InvalidInstructionData)),
-    };
+    let paused = u8::from(decode_paused(args).map_err(custom)?);
     let c = state::load::<Config>(config, program_id)?;
     check_admin(admin, &c, config.address(), program_id)?;
     let series_address = *series.address();

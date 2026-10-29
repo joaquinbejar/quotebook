@@ -50,7 +50,7 @@ pub fn process_cancel_all(
     accounts: &mut [AccountView],
     args: &[u8],
 ) -> ProgramResult {
-    let new_min = Nonce::new(decode_u64(args)?);
+    let new_min = Nonce::new(decode_u64(args).map_err(custom)?);
     with_window(program_id, accounts, |w| w.cancel_all(new_min))
 }
 
@@ -66,6 +66,6 @@ pub fn process_cancel_nonce(
     accounts: &mut [AccountView],
     args: &[u8],
 ) -> ProgramResult {
-    let nonce = Nonce::new(decode_u64(args)?);
+    let nonce = Nonce::new(decode_u64(args).map_err(custom)?);
     with_window(program_id, accounts, |w| w.consume(nonce))
 }

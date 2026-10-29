@@ -34,16 +34,26 @@ const MULTISIG_LEN: usize = 355;
 const ACCOUNT_STATE_FROZEN: u8 = 2;
 
 /// Token-2022 `ExtensionType` values (spl-token-2022-interface 3.1.2, `extension/mod.rs`).
-mod ext {
+pub mod ext {
+    /// `MintCloseAuthority`.
     pub const MINT_CLOSE_AUTHORITY: u16 = 3;
+    /// `DefaultAccountState`.
     pub const DEFAULT_ACCOUNT_STATE: u16 = 6;
+    /// `InterestBearingConfig`.
     pub const INTEREST_BEARING_CONFIG: u16 = 10;
+    /// `MetadataPointer`.
     pub const METADATA_POINTER: u16 = 18;
+    /// `TokenMetadata`.
     pub const TOKEN_METADATA: u16 = 19;
+    /// `GroupPointer`.
     pub const GROUP_POINTER: u16 = 20;
+    /// `TokenGroup`.
     pub const TOKEN_GROUP: u16 = 21;
+    /// `GroupMemberPointer`.
     pub const GROUP_MEMBER_POINTER: u16 = 22;
+    /// `TokenGroupMember`.
     pub const TOKEN_GROUP_MEMBER: u16 = 23;
+    /// `ScaledUiAmount`.
     pub const SCALED_UI_AMOUNT: u16 = 25;
 }
 
@@ -86,22 +96,33 @@ fn check_extensions(data: &[u8]) -> Result<(), ProgramError> {
     tlv::walk(tlv, malformed, check_extension)
 }
 
+/// The Token-2022 extension types a series mint may carry: metadata, display and close
+/// authority only. `DefaultAccountState` passes only when the default is not `Frozen`. The
+/// benchmark's worst-case mint is built from this list, so an addition is measured too.
+pub const ALLOWED_EXTENSIONS: [u16; 10] = [
+    ext::MINT_CLOSE_AUTHORITY,
+    ext::DEFAULT_ACCOUNT_STATE,
+    ext::INTEREST_BEARING_CONFIG,
+    ext::METADATA_POINTER,
+    ext::TOKEN_METADATA,
+    ext::GROUP_POINTER,
+    ext::TOKEN_GROUP,
+    ext::GROUP_MEMBER_POINTER,
+    ext::TOKEN_GROUP_MEMBER,
+    ext::SCALED_UI_AMOUNT,
+];
+
 fn check_extension(kind: u16, value: &[u8]) -> ProgramResult {
-    match kind {
-        ext::DEFAULT_ACCOUNT_STATE => match value {
+    if kind == ext::DEFAULT_ACCOUNT_STATE {
+        return match value {
             [state] if *state != ACCOUNT_STATE_FROZEN => Ok(()),
             [_] => Err(custom(QuotebookError::MintExtensionUnsupported)),
             _ => Err(custom(QuotebookError::InvalidMint)),
-        },
-        ext::MINT_CLOSE_AUTHORITY
-        | ext::INTEREST_BEARING_CONFIG
-        | ext::METADATA_POINTER
-        | ext::TOKEN_METADATA
-        | ext::GROUP_POINTER
-        | ext::TOKEN_GROUP
-        | ext::GROUP_MEMBER_POINTER
-        | ext::TOKEN_GROUP_MEMBER
-        | ext::SCALED_UI_AMOUNT => Ok(()),
-        _ => Err(custom(QuotebookError::MintExtensionUnsupported)),
+        };
+    }
+    if ALLOWED_EXTENSIONS.contains(&kind) {
+        Ok(())
+    } else {
+        Err(custom(QuotebookError::MintExtensionUnsupported))
     }
 }

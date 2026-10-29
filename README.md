@@ -6,7 +6,7 @@ Request-for-quote trading on Solana with quotes signed off chain.
 
 A maker signs a quote off chain; the taker submits it, and the program verifies the ed25519 signature through instruction introspection, checks expiry and nonce, and settles atomically. Cancelling every outstanding quote is one nonce bump.
 
-**Status:** milestone 3 of [docs/PLAN.md](docs/PLAN.md).
+**Status:** milestones 4 and 5 of [docs/PLAN.md](docs/PLAN.md).
 
 - `quotebook-core`: the `no_std` crate shared by the program and the clients, with the
   quantity newtypes, the signed `Quote` and its canonical 208-byte encoding, the parser that
@@ -16,9 +16,13 @@ A maker signs a quote off chain; the taker submits it, and the program verifies 
   every v1 instruction: `init_config`, `set_config`, `create_series`, `set_series_paused`,
   `init_maker`, `cancel_all`, `cancel_nonce` and `settle`, tested in LiteSVM against the real
   SPL Token, Token-2022 and ed25519 programs. Compute-unit costs are in
-  [docs/benchmarks.md](docs/benchmarks.md).
+  [docs/benchmarks.md](docs/benchmarks.md), with the worst case of `settle` per token
+  program and a cited comparison with matchbook.
+- `sdk` (`quotebook-sdk`): Rust client SDK with every PDA, a builder for every instruction,
+  the precompile + `settle` pair for a signed quote, and account decoders; tested end to end
+  in LiteSVM.
 
-The taker SDK and the maker service follow in later milestones.
+The maker service follows in milestone 6.
 
 ## Development
 
