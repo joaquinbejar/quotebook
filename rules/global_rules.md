@@ -29,12 +29,15 @@ takes the decision away from the caller. Production code never panics.
   `arithmetic_side_effects` are denied.
 - Tests, benches and test harnesses (`#[cfg(test)]`, `tests/`, `bench/`) may panic, unwrap
   and assert; they start with an explicit `#![allow(...)]` like matchbook's test files,
-  including `clippy::float_arithmetic` where they compare against `f64` references.
+  including `clippy::disallowed_macros` where they assert and `clippy::float_arithmetic`
+  where they compare against `f64` references.
 - Enforced by lints in `[workspace.lints]`:
   ```toml
   [workspace.lints.rust]
   unsafe_code = "deny"
   missing_docs = "deny"
+  # plus each repo's own cfgs, e.g. Pinocchio's 'cfg(target_os, values("solana"))'
+  unexpected_cfgs = { level = "warn", check-cfg = ['cfg(lint_control)'] }
 
   [workspace.lints.clippy]
   panic = "deny"
@@ -49,7 +52,21 @@ takes the decision away from the caller. Production code never panics.
   float_arithmetic = "deny"          # whole workspace; see below
   panic_in_result_fn = "deny"
   manual_assert = "deny"
+  disallowed_macros = "deny"         # list in clippy.toml
   ```
+- The lints above do not catch `assert!`, `assert_eq!`, `assert_ne!` or the `debug_assert`
+  family. `clippy.toml` at the workspace root, identical in the four repos, lists them in
+  `disallowed-macros` with `panic!` and `unreachable!`, by their `core` paths (which also
+  cover the `std` re-exports) plus `std::panic` (a separate definition), and
+  `disallowed_macros` is denied. Pinocchio's `no_allocator!` expands to `assert!` (in
+  `allocate_unchecked`'s offset helper), so the module that invokes the entrypoint macros
+  allows `clippy::disallowed_macros` next to `unsafe_code`, with a comment.
+- `make lint-control` is the failing control, part of `make pre-push`: a `lint-control`
+  workspace member (`publish = false`) whose library code, compiled only under
+  `--cfg lint_control`, calls every banned macro through its `core`, `std` and prelude names,
+  each probe line ending in `// expect: <path>`. `lint-control/check.sh` runs clippy without
+  `-D warnings` and requires, on each probe line, an error naming exactly that path, so
+  removing any `clippy.toml` entry or the deny level fails the control.
 
 ---
 
@@ -200,8 +217,9 @@ Derive only what is meaningful. No `Default` where zero is not a valid value.
 
 All must pass; failing any means not ready:
 
-- `make pre-push` (fmt check, clippy `-D warnings` on all targets and features, tests,
-  `cargo build-sbf` for programs, docs with `-D warnings`), zero warnings.
+- `make pre-push` (fmt check, clippy `-D warnings` on all targets and features, the
+  `lint-control` failing control, tests, `cargo build-sbf` for programs, docs with
+  `-D warnings`), zero warnings.
 - No panic paths in production code (lints above clean).
 - Dependencies at the latest stable version, written `MAJOR.MINOR`.
 - CU table updated for changed instructions; error-bound table updated for changed math.

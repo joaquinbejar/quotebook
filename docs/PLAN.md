@@ -352,8 +352,17 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
 1. **Core types and encoding.** `quotebook-core` with `Quote`, newtypes, errors, `encode`/
    `decode`, bitmap. *Done when* proptest shows `decode(encode(q)) == q` at aligned and
    unaligned offsets, `decode` rejects invalid `side` bytes, the bitmap model test
-   (random fills, cancels, slides against a `BTreeSet` reference) passes, and `make pre-push`
-   is clean.
+   (random fills, cancels, slides against a `BTreeSet` reference) passes, the lint-control
+   failing control is in place, and `make pre-push` is clean. Lint control, from optfix
+   (`afb9d4d`), when the Cargo workspace is created:
+   - copy `lint-control/` (`Cargo.toml`, `src/lib.rs`, `check.sh`) from optfix;
+   - add it to the workspace members;
+   - add `cfg(lint_control)` to `unexpected_cfgs` `check-cfg`, next to Pinocchio's
+     `cfg(target_os, values("solana"))`;
+   - add `disallowed_macros = "deny"` to `[workspace.lints.clippy]` (list in `clippy.toml`);
+   - allow `clippy::disallowed_macros` in tests and benches, and in the module that invokes
+     the entrypoint macros (Pinocchio's `no_allocator!` expands to `assert!`), with a comment;
+   - put `lint-control` in `make pre-push`.
 2. **Program skeleton and accounts.** `init_config`, `create_series`, `init_maker`,
    `cancel_all`, `cancel_nonce`, with LiteSVM tests and negative tests for each
    validation rule. *Done when* every rule in 3.3 for these instructions has a passing forged-
