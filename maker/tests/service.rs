@@ -81,6 +81,8 @@ fn config(max_deviation: &str) -> ServiceConfig {
         },
         ttl: Seconds::new(30),
         max_size: BaseLots::new(100),
+        maker_base: Address::new_from_array([21; 32]),
+        maker_quote: Address::new_from_array([22; 32]),
     }
 }
 
