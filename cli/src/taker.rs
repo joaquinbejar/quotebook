@@ -39,7 +39,14 @@ pub fn request(
 ///
 /// `Quote` if the maker refuses or the answer is malformed.
 pub async fn ask(url: &str, request: &QuoteRequest) -> Result<Answer, CliError> {
-    Ok(client::request_quote(url, request).await?)
+    client::request_quote(url, request)
+        .await
+        .map_err(|e| match e {
+            client::ClientError::Transport(m) => CliError::Quote(client::ClientError::Transport(
+                crate::error::redact_urls(&m),
+            )),
+            other => CliError::Quote(other),
+        })
 }
 
 /// Checks `answer` against the series read from chain and the cluster clock: the signature

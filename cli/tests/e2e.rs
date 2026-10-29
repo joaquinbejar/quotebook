@@ -288,3 +288,31 @@ fn test_cli_keypair_errors_name_the_path_only() {
         "cannot read keypair file /nonexistent/maker.json"
     );
 }
+
+/// A real transport error from `solana-rpc-client` against a loopback port that refuses the
+/// connection: neither the error nor `Debug` may show the URL or its API key.
+#[test]
+fn test_cli_rpc_errors_never_show_the_url() {
+    use quotebook_cli::rpc::{Cluster, Rpc};
+    // Bind and drop to get a port nobody listens on.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let url = format!("http://127.0.0.1:{port}/?api-key=SECRET-API-KEY-123");
+    let mut cluster = Cluster::new(&url);
+    let debug = format!("{cluster:?}");
+    assert!(
+        !debug.contains("SECRET") && !debug.contains("127.0.0.1"),
+        "{debug}"
+    );
+    let err = cluster.genesis_hash().unwrap_err().to_string();
+    assert!(!err.contains("SECRET"), "{err}");
+    assert!(!err.contains(&format!("127.0.0.1:{port}")), "{err}");
+    let err = cluster
+        .account(&solana_sdk_ids::system_program::ID)
+        .unwrap_err()
+        .to_string();
+    assert!(!err.contains("SECRET"), "{err}");
+}
