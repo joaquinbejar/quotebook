@@ -6,7 +6,7 @@ Request-for-quote trading on Solana with quotes signed off chain.
 
 A maker signs a quote off chain; the taker submits it, and the program verifies the ed25519 signature through instruction introspection, checks expiry and nonce, and settles atomically. Cancelling every outstanding quote is one nonce bump.
 
-**Status:** milestones 4 and 5 of [docs/PLAN.md](docs/PLAN.md).
+**Status:** milestone 6 of [docs/PLAN.md](docs/PLAN.md).
 
 - `quotebook-core`: the `no_std` crate shared by the program and the clients, with the
   quantity newtypes, the signed `Quote` and its canonical 208-byte encoding, the parser that
@@ -22,7 +22,12 @@ A maker signs a quote off chain; the taker submits it, and the program verifies 
   the precompile + `settle` pair for a signed quote, and account decoders; tested end to end
   in LiteSVM.
 
-The maker service follows in milestone 6.
+- `maker` (`quotebook-maker`): the maker service (market-maker-rs pricing, price bounds,
+  the nonce issuance bound, ed25519 signing, a WebSocket RFQ protocol) and the taker client
+  (request, verify, rank). `cargo run -p quotebook-maker --example demo` runs two makers and a
+  taker against the program in LiteSVM and settles the best quote.
+
+Devnet deployment follows in milestone 7.
 
 ## Development
 

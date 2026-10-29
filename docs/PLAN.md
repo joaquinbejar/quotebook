@@ -460,6 +460,20 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
    and the service refuses to stamp a nonce below `min_issued_at_beyond_window` of the quotes
    16,384 nonces back (section 4.2: at most 16,384 nonces per `max_quote_ttl +
    MAX_CLOCK_SKEW`).
+   Built in M6: `maker/` (`quotebook-maker`). `pricing` prices with market-maker-rs 0.6's
+   `avellaneda_stoikov::calculate_optimal_quotes` and checks `|price − mid| / mid` against a
+   tolerance (otc-rfq's `price_bounds` pattern, copied with attribution, no dependency: open
+   question 5 settled that way). `market` converts a decimal price to ticks rounding toward
+   the maker (bids down, asks up). `issuer` keeps the running maximum expiry for each of the
+   last 16,384 nonces and refuses a nonce below `min_issued_at_beyond_window` of the one
+   16,384 back. `server` answers JSON requests over one WebSocket per connection; `client`
+   requests, verifies the signature and every term the program checks, and ranks by price
+   (otc-rfq's `BestPriceStrategy` pattern, on integer ticks). `keys` keeps the key out of
+   `Debug` and logs. The demo (`examples/demo.rs`, also run as `tests/demo.rs`) is LiteSVM +
+   two maker services + the taker flow, settling the best quote through the SDK. Not in v1,
+   behind traits: a Pyth Hermes feed (`PriceFeed`) and live inventory (`Inventory`); the
+   issuer is not persisted, so a restarted service resumes above its last nonce or sends
+   `cancel_all` first. GLFT and the options feature are not used yet.
 7. **Devnet and docs.** *Done when* the program is deployed to devnet, README and
    `docs/instructions.md` are written, and v0.1 crates are ready to publish (published after
    your go-ahead).
@@ -510,7 +524,12 @@ whenever it is added or touched.
 | `solana-instructions-sysvar` (SDK) | 5.0.0 | `5.0` |
 | `market-maker-rs` (maker) | 0.6.0 | `0.6` |
 | `rust_decimal` (maker) | 1.43.0 | `1.43` |
-| `thiserror` (SDK) | 2.0.21 | `2.0` |
+| `thiserror` (SDK, maker) | 2.0.21 | `2.0` |
+| `market-maker-rs` (maker) | 0.6.0 | `0.6` |
+| `tokio`, `tokio-tungstenite`, `futures-util` (maker) | 1.54.1, 0.30.0, 0.3.34 | `1.54`, `0.30`, `0.3` |
+| `serde`, `serde_json` (maker) | 1.0.229, 1.0.154 | `1.0`, `1.0` |
+| `tracing`, `tracing-subscriber` (maker; subscriber in the demo only) | 0.1.44, 0.3.23 | `0.1`, `0.3` |
+| `solana-signature` (maker, `verify`) | 3.6.0 (3.5.2 used) | `3.5`: the LiteSVM generation, like `solana-keypair` |
 | `solana-instruction` (SDK) | 4.0.0 | `3.5`: the SDK's `Instruction` must be LiteSVM's, so it stays on the LiteSVM generation (exception below) |
 
 **LiteSVM pin (M2).** LiteSVM 0.18.1, the latest, requires `solana-address ~2.7` and the
@@ -534,7 +553,8 @@ the 0.12 generation together once 0.12-compatible token crates are released.
 3. `max_quote_ttl`: 60 s proposed. Shorter for volatile underlyings?
 4. Open quotes (`taker = 0`): the quotebook session suggests taker-bound by default with open
    quotes allowed. OK?
-5. otc-rfq: copy the two service modules, or extract a shared crate both use?
+5. otc-rfq: decided in M6: copy the two patterns (price bounds, best-price ranking) with
+   attribution; no shared crate.
 6. Decided (2026-10-29): Pinocchio 0.11 generation (exception above).
 7. Proposal (from review, pending your approval): no multi-fill instruction in v1; an explicit `sig_ix_index` already
    allows several `settle` instructions (one per maker or leg) in one atomic transaction.
