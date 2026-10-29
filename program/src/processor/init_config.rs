@@ -31,7 +31,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
     let [admin, payer, config, program_data, system, ..] = accounts else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
-    let deployment_id = decode_deployment_id(args)?;
+    let deployment_id = decode_deployment_id(args).map_err(custom)?;
     signer(admin)?;
     signer(payer)?;
     writable(payer)?;
