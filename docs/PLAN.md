@@ -135,8 +135,28 @@ pub enum QuotebookError {
     SeriesPaused,
     NotAuthority,
     MintExtensionUnsupported,
+    // appended in M1
+    MalformedQuote,                // side not 0 or 1, non-zero padding, zero price or size
+    WatermarkNotIncreasing,        // cancel_all did not raise window_base
 }
 ```
+
+M1 implementation notes (`quotebook-core`, decided while building it):
+
+- Codes are dense from 100 (`InvalidInstruction`) to 129 (`WatermarkNotIncreasing`); new
+  variants are only appended. `QuotebookError::from_code` lets clients decode them.
+- `Quote` is a validated type, not the wire struct: `Quote::new(QuoteTerms)` rejects a zero
+  price or size, and `QuoteTerms` (public fields, `Side` as the enum) is the input form. The
+  208-byte layout is a private `QuoteWire` of byte arrays only (alignment 1, no padding, same
+  layout on host and SBF), converted with `bytemuck::must_cast` (size checked at compile
+  time). The domain tag is a constant, not a field: `decode` checks it (`WrongDomain`).
+  `decode` accepts exactly the outputs of `encode` (property tested), so the encoding is
+  canonical.
+- `MAX_CLOCK_SKEW` (10 s) and `QUOTE_DOMAIN` live in `quotebook-core`.
+- `derive(Pod)` on a multi-field struct emits a compile-time `const _: () = assert!(..)`,
+  which `clippy::disallowed_macros` reports. Pod layouts therefore sit in small `layout`
+  modules with a module-level `#[allow(clippy::disallowed_macros)]` and no logic; the same
+  pattern applies to the M2 accounts.
 
 ### otc-rfq: what can be reused
 
@@ -168,7 +188,7 @@ and are `bytemuck::Pod`, loaded zero-copy.
 | --- | --- | --- | --- | --- |
 | `Config` | `["config"]` | quotebook | 8 + 32 + 8 + 16 = 64 | `init_config`, `set_config` (admin; never `deployment_id`) |
 | `Series` | `["series", base_mint, quote_mint, series_index_le]` | quotebook | 144 | `create_series`, `set_series_paused` |
-| `MakerState` | `["maker", maker]` | quotebook | 8 + 32 + 8×3 + 8 + 2,048 = 2,120 | `init_maker`, `cancel_all`, `cancel_nonce`, `settle` |
+| `MakerState` | `["maker", maker]` | quotebook | 8 + 32 + 8 + 8 + 2,064 = 2,120 | `init_maker`, `cancel_all`, `cancel_nonce`, `settle` |
 | Delegate authority | `["delegate", maker]` | none (PDA, no data) | 0 | never; signs that maker's token transfers |
 
 Field sketches:
@@ -183,11 +203,12 @@ struct Series {
 }
 struct MakerState {
     hdr: Hdr, maker: Address,
-    window_base: u64,           // lowest fillable nonce; also the cancel-all watermark
     fills: u64,                 // counter, for clients
-    last_cancel_all: u64,       // tells NonceCancelled from NonceOutOfWindow
     delegate_bump: u8, _pad: [u8; 7],
-    used: [u64; 256],           // 16,384-bit ring: bit (n mod 16,384) for nonces in the window
+    nonces: NonceWindow,        // quotebook-core, 2,064 bytes:
+    //  window_base: u64,       // lowest fillable nonce; also the cancel-all watermark
+    //  last_cancel_all: u64,   // tells NonceCancelled from NonceOutOfWindow
+    //  used: [u64; 256],       // 16,384-bit ring: bit (n mod 16,384) for nonces in the window
 }
 ```
 
@@ -298,11 +319,24 @@ slots of nonces `[B, B')` (`min(B' − B, 16,384)` bits), with masked clears on 
 because `B` and `B'` need not be multiples of 64; the model test includes unaligned
 `cancel_all` values. `MakerState.last_cancel_all` tells them apart: a rejected
 `n < window_base` reports `NonceCancelled` when `n < last_cancel_all` and
-`NonceOutOfWindow` otherwise. `cancel_all(new_min)` is the single slide the brief asks for. Because a
-quote's lifetime is bounded by `max_quote_ttl` (proposed 60 s), a maker issuing fewer than
-16,384 quotes per TTL (about 270 per second) never loses a live quote to sliding; the maker
-service enforces that rate. 2 KiB of bitmap costs about 0.015 SOL of rent once; milestone 4
-measures the worst-case slide CU.
+`NonceOutOfWindow` otherwise. `cancel_all(new_min)` is the single slide the brief asks for.
+2 KiB of bitmap costs about 0.015 SOL of rent once; milestone 4 measures the worst-case slide
+CU.
+
+**Issuance bound (corrected in M1 review).** Invariant 4 lets a quote be filled only while
+`issued_at − MAX_CLOCK_SKEW <= now < expires_at`, a span of up to `max_quote_ttl +
+MAX_CLOCK_SKEW` (70 s at 60 s + 10 s), not `max_quote_ttl`. The maker therefore follows:
+*for every nonce `M`, `issued_at(M) >= expires_at(N) + MAX_CLOCK_SKEW` for every `N <= M −
+16,384`* (`quotebook_core::min_issued_at_beyond_window`). Proof sketch: the window drops `N`
+only when some `M >= N + 16,384` is consumed; a `settle` of `M` lands at `t >= issued_at(M) −
+MAX_CLOCK_SKEW >= expires_at(N)`, when `N` is already expired, and `cancel_nonce` /
+`cancel_all` are the maker's own choice. With `issued_at` non-decreasing in the nonce, the rule
+holds if `issued_at(N + 16,384) − issued_at(N) >= max_quote_ttl + MAX_CLOCK_SKEW`: at most
+16,384 nonces per 70 s, about 234 quotes per second. A TTL-only horizon is unsound (codex's
+counterexample: a quote accepted at `now = 0` with `issued_at = 10, expires_at = 70`, then a
+nonce 16,384 stamped 61 s later is fillable at `t = 61` and evicts it); that case is a
+regression test in `quotebook-core/tests/eviction_bound.rs`. The bound uses the maker's
+largest `max_quote_ttl` across the series it quotes, since nonces are per maker.
 
 ### 4.3 Partial fills
 
@@ -377,7 +411,9 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
    signature, and an end-to-end LiteSVM test uses only the SDK.
 6. **Maker service.** *Done when* a local demo (maker service + taker CLI + LiteSVM or
    solana-test-validator) requests, receives and settles a quote priced by market-maker-rs,
-   and the service refuses to exceed the 16,384-per-TTL nonce rate.
+   and the service refuses to stamp a nonce below `min_issued_at_beyond_window` of the quotes
+   16,384 nonces back (section 4.2: at most 16,384 nonces per `max_quote_ttl +
+   MAX_CLOCK_SKEW`).
 7. **Devnet and docs.** *Done when* the program is deployed to devnet, README and
    `docs/instructions.md` are written, and v0.1 crates are ready to publish (published after
    your go-ahead).
@@ -414,11 +450,11 @@ whenever it is added or touched.
 | Crate | Latest stable | Requirement |
 | --- | --- | --- |
 | `pinocchio` | 0.12.0 (0.11.2 used) | `0.11`, decided exception below |
-| `bytemuck` | 1.25.2 | `1.25` |
+| `bytemuck` | 1.25.2 | `1.25`, features `derive`, `must_cast`, `min_const_generics` |
 | `proptest` (dev) | 1.12.0 | `1.12` |
 | `litesvm` (dev) | 0.18.1 | `0.18` |
 | `mollusk-svm` (dev, optional) | 0.16.4 | `0.16` |
-| `solana-address` | 2.9.0 | `2.9` |
+| `solana-address` | 2.9.0 | `2.9`, `default-features = false`, feature `bytemuck` |
 | `pinocchio-system` | 0.7.0 (0.6.1 used) | `0.6`, decided exception below |
 | `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |

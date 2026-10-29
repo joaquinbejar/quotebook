@@ -1,0 +1,21 @@
+[package]
+name = "quotebook-core"
+description = "quotebook domain types, canonical signed-quote encoding and nonce replay window: no_std, allocation free"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../README.md"
+keywords = ["solana", "rfq", "ed25519", "no-std"]
+categories = ["finance", "no-std", "cryptography::cryptocurrencies"]
+
+[dependencies]
+bytemuck = { workspace = true }
+solana-address = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true
