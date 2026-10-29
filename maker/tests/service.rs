@@ -15,7 +15,9 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
-use quotebook_core::{BaseLots, Nonce, Quote, Seconds, Side, UnixTimestamp, WINDOW_BITS};
+use quotebook_core::{
+    BaseLots, Nonce, Quote, QuotebookError, Seconds, Side, UnixTimestamp, WINDOW_BITS,
+};
 use quotebook_maker::client::{self, ClientError, Expectation, SignedQuote};
 use quotebook_maker::issuer::NonceIssuer;
 use quotebook_maker::keys::MakerKey;
@@ -133,14 +135,11 @@ fn reason(answer: ServerMessage) -> RejectReason {
 
 fn expectation(taker: &Address, side: TakerSide, size: u64, now: i64) -> Expectation {
     Expectation {
-        program_id: market().program_id,
-        deployment: market().deployment,
-        series: market().series,
+        market: market(),
         taker: *taker,
         taker_side: side,
         size: BaseLots::new(size),
         now: UnixTimestamp::new(now),
-        max_quote_ttl: Seconds::new(60),
     }
 }
 
@@ -261,60 +260,66 @@ fn test_client_verify_rejects_every_mismatch() {
         Err(ClientError::BadSignature)
     );
 
-    let cases: [(Expectation, &str); 7] = [
+    let other = |f: fn(&mut MarketInfo)| {
+        let mut m = market();
+        f(&mut m);
+        Expectation { market: m, ..ok }
+    };
+    let cases = [
         (
-            Expectation {
-                program_id: Address::new_from_array([1; 32]),
-                ..ok
-            },
-            "another program",
+            other(|m| m.program_id = Address::new_from_array([1; 32])),
+            QuotebookError::WrongProgram,
         ),
         (
-            Expectation {
-                deployment: [0; 16],
-                ..ok
-            },
-            "another deployment",
+            other(|m| m.deployment = [0; 16]),
+            QuotebookError::WrongSeries,
         ),
         (
-            Expectation {
-                series: Address::new_from_array([1; 32]),
-                ..ok
-            },
-            "another series",
+            other(|m| m.series = Address::new_from_array([1; 32])),
+            QuotebookError::WrongSeries,
         ),
         (
             Expectation {
                 taker: Keypair::new().pubkey(),
                 ..ok
             },
-            "bound to another taker",
-        ),
-        (
-            Expectation {
-                taker_side: TakerSide::Sell,
-                ..ok
-            },
-            "wrong side",
+            QuotebookError::WrongTaker,
         ),
         (
             Expectation {
                 size: BaseLots::new(11),
                 ..ok
             },
-            "smaller than requested",
+            QuotebookError::FillSizeInvalid,
+        ),
+        (
+            Expectation {
+                size: BaseLots::new(1),
+                ..ok
+            },
+            QuotebookError::FillSizeInvalid,
         ),
         (
             Expectation {
                 now: UnixTimestamp::new(NOW + 30),
                 ..ok
             },
-            "outside its time window",
+            QuotebookError::QuoteExpired,
         ),
     ];
     for (exp, why) in cases {
-        assert_eq!(client::verify(&q, &exp), Err(ClientError::BadQuote(why)));
+        assert_eq!(client::verify(&q, &exp), Err(ClientError::WouldFail(why)));
     }
+    assert!(matches!(
+        client::verify(
+            &q,
+            &Expectation {
+                taker_side: TakerSide::Sell,
+                ..ok
+            }
+        ),
+        Err(ClientError::Mismatch(_))
+    ));
 }
 
 #[test]

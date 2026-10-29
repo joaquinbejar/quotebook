@@ -257,6 +257,35 @@ impl Chain {
             .nonces
     }
 
+    /// The precompile + settle pair for `signed`, built by the SDK.
+    pub fn settle_pair(
+        &self,
+        signed: &SignedQuote,
+        maker: &Maker,
+        taker: &Taker,
+        size: BaseLots,
+    ) -> [Instruction; 2] {
+        let accounts = SettleAccounts {
+            taker: taker.key.pubkey(),
+            base_mint: self.base_mint,
+            quote_mint: self.quote_mint,
+            base_token_program: token_program(),
+            quote_token_program: token_program(),
+            maker_base: maker.base,
+            maker_quote: maker.quote,
+            taker_base: taker.base,
+            taker_quote: taker.quote,
+        };
+        quotebook_sdk::settle_instructions(
+            &PROGRAM_ID,
+            &signed.quote,
+            &signed.signature,
+            &accounts,
+            size,
+            0,
+        )
+    }
+
     /// Settles `signed` for `size` lots through the SDK.
     pub fn settle(
         &mut self,

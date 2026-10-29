@@ -97,14 +97,11 @@ pub async fn run() -> Report {
         size_lots: size.get(),
     };
     let expected = Expectation {
-        program_id: market.program_id,
-        deployment: market.deployment,
-        series: market.series,
+        market,
         taker: taker.key.pubkey(),
         taker_side: TakerSide::Buy,
         size,
         now: UnixTimestamp::new(NOW),
-        max_quote_ttl: market.max_quote_ttl,
     };
     let mut quotes: Vec<SignedQuote> = Vec::new();
     for url in &urls {

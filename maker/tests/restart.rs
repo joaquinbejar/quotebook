@@ -231,3 +231,43 @@ fn test_resumed_issuer_waits_out_an_unfilled_quote() {
         "{err}"
     );
 }
+
+/// Codex's reproduction against the program: a pre-restart nonce 1 is live; a fresh issuer
+/// starting at 2 at the same timestamp signs through 16,385; the program accepts 16,385 and
+/// then rejects the still-live nonce 1 with `NonceOutOfWindow` (121). A resumed issuer signs
+/// nothing at that timestamp.
+#[test]
+fn test_codex_restart_regression() {
+    let mut chain = Chain::new();
+    let maker = chain.maker();
+    let taker = chain.taker();
+    let clock = Clock(Arc::new(AtomicI64::new(NOW)));
+    let window = chain.window(&maker.key.pubkey());
+    let old = service(&chain, &maker, NonceIssuer::fresh(Nonce::new(1)), &clock);
+    let q1 = quote(&old, &chain, &taker, 1).unwrap();
+    assert_eq!(q1.quote.terms().nonce, Nonce::new(1));
+
+    let naive = service(&chain, &maker, NonceIssuer::fresh(Nonce::new(2)), &clock);
+    let mut last = None;
+    for id in 2..=16_385u64 {
+        last = Some(quote(&naive, &chain, &taker, id).unwrap());
+    }
+    let q16385 = last.unwrap();
+    assert_eq!(q16385.quote.terms().nonce, Nonce::new(16_385));
+    chain
+        .settle(&q16385, &maker, &taker, BaseLots::new(1))
+        .unwrap();
+    let err = chain
+        .settle(&q1, &maker, &taker, BaseLots::new(1))
+        .unwrap_err();
+    assert!(err.contains("Custom(121)"), "{err}");
+    assert_eq!(QuotebookError::NonceOutOfWindow.code(), 121);
+
+    // The same restart through `resume` refuses at that timestamp.
+    let issuer = NonceIssuer::resume(&window, UnixTimestamp::new(NOW), Seconds::new(60)).unwrap();
+    let resumed = service(&chain, &maker, issuer, &clock);
+    assert_eq!(
+        quote(&resumed, &chain, &taker, 99).unwrap_err(),
+        RejectReason::RateLimited
+    );
+}

@@ -278,6 +278,29 @@ mod tests {
         assert_eq!(m.price_to_ticks(d("7"), Rounding::Up).unwrap().get(), 1);
     }
 
+    /// Codex's reproduction: base decimals 0, quote decimals 6, base lot 1, quote lot
+    /// 7,000,000 atoms (one tick is 7 quote tokens).
+    #[test]
+    fn test_price_to_ticks_codex_regressions() {
+        let m = MarketInfo {
+            base_decimals: 0,
+            quote_decimals: 6,
+            base_lot_size: 1,
+            quote_lot_size: 7_000_000,
+            ..market()
+        };
+        assert_eq!(
+            m.price_to_ticks(d("6.9999999999999999999999999999"), Rounding::Down),
+            Err(TickError::NotPositive)
+        );
+        assert_eq!(
+            m.price_to_ticks(d("7.0000000000000000000000000001"), Rounding::Up)
+                .unwrap()
+                .get(),
+            2
+        );
+    }
+
     #[test]
     fn test_price_to_ticks_rejects_non_positive_and_overflow() {
         let m = market();
