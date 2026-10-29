@@ -282,7 +282,7 @@ reject if `n < window_base`; if `n >= window_base + 16,384`, slide first to `n â
 then check and set bit `n mod 16,384` of the ring. Sliding from `B` to `B'` clears exactly the
 slots of nonces `[B, B')` (`min(B' âˆ’ B, 16,384)` bits), with masked clears on the edge words
 because `B` and `B'` need not be multiples of 64; the model test includes unaligned
-`cancel_all` values. `MakerState._reserved` becomes `last_cancel_all`, so a rejected
+`cancel_all` values. `MakerState.last_cancel_all` tells them apart: a rejected
 `n < window_base` reports `NonceCancelled` when `n < last_cancel_all` and
 `NonceOutOfWindow` otherwise. `cancel_all(new_min)` is the single slide the brief asks for. Because a
 quote's lifetime is bounded by `max_quote_ttl` (proposed 60 s), a maker issuing fewer than
