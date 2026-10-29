@@ -39,14 +39,25 @@ pub fn request(
 ///
 /// `Quote` if the maker refuses or the answer is malformed.
 pub async fn ask(url: &str, request: &QuoteRequest) -> Result<Answer, CliError> {
-    client::request_quote(url, request)
-        .await
-        .map_err(|e| match e {
-            client::ClientError::Transport(m) => CliError::Quote(client::ClientError::Transport(
-                crate::error::Redactor::new(url).redact(&m),
-            )),
-            other => CliError::Quote(other),
+    // A maker service is untrusted input and its URL may carry a key: every string in an
+    // error from this exchange (transport text, protocol detail, the maker's own reject
+    // message) is redacted here, at the boundary that knows the URL.
+    let redactor = crate::error::Redactor::new(url);
+    client::request_quote(url, request).await.map_err(|e| {
+        CliError::Quote(match e {
+            client::ClientError::Transport(m) => {
+                client::ClientError::Transport(redactor.redact(&m))
+            }
+            client::ClientError::Protocol(m) => client::ClientError::Protocol(redactor.redact(&m)),
+            client::ClientError::Rejected { reason, message } => client::ClientError::Rejected {
+                reason,
+                message: redactor.redact(&message),
+            },
+            other @ (client::ClientError::WouldFail(_)
+            | client::ClientError::Mismatch(_)
+            | client::ClientError::BadSignature) => other,
         })
+    })
 }
 
 /// Checks `answer` against the series read from chain and the cluster clock: the signature

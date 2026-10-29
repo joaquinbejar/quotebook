@@ -2854,6 +2854,7 @@ dependencies = [
 name = "quotebook-cli"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "litesvm",
  "quotebook-core",
  "quotebook-maker",
@@ -2874,6 +2875,7 @@ dependencies = [
  "solana-transaction",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
 ]
