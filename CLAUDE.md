@@ -4,8 +4,8 @@ RFQ on Solana: makers sign `Quote`s off-chain (ed25519), takers settle with the 
 precompile plus `settle`, verified through the instructions sysvar. The precompile instruction must be
 self-contained (all instruction indexes `0xFFFF`) and the program reads the quote from its data.
 Crates: `quotebook-core` (no_std shared types and encoding), `program`, `sdk`, `maker` (std service
-using `~/Repos/Local/market-maker-rs`). Replay protection: per-maker sliding nonce bitmap plus
-`min_valid_nonce` watermark.
+using `~/Repos/Local/market-maker-rs`). Replay protection: per-maker 16,384-bit nonce ring whose
+`window_base` is also the cancel-all watermark; per-maker delegate PDA.
 
 ## Conventions shared with matchbook
 

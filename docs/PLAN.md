@@ -48,9 +48,12 @@ pub struct Nonce(pub u64);
 #[repr(u8)]
 pub enum Side { Bid = 0, Ask = 1 }         // the maker's side: Bid = maker buys base
 
-/// What the maker signs. Fixed 160-byte little-endian encoding, defined in one place
+/// What the maker signs. Fixed 192-byte little-endian encoding, defined in one place
 /// (`Quote::encode` / `Quote::decode`), and the program never re-serializes it: it reads the
-/// signed bytes straight out of the precompile instruction.
+/// signed bytes straight out of the precompile instruction. The message may sit at an
+/// unaligned offset in the precompile data, so `decode` uses `pod_read_unaligned` (or reads
+/// field by field) and validates `side`; it never casts in place. All newtypes are
+/// `#[repr(transparent)]`; padding is explicit so the struct can derive `Pod`.
 #[repr(C)]
 pub struct Quote {
     pub domain: [u8; 16],          // b"quotebook-v1\0\0\0\0": domain separation
@@ -58,15 +61,17 @@ pub struct Quote {
     pub maker: Address,
     pub series: SeriesId,
     pub taker: Address,            // all zeros = any taker; otherwise only this signer
-    pub side: Side,                // + 7 bytes padding
+    pub side: u8,                  // Side as u8; decode rejects anything but 0 or 1
+    pub _pad: [u8; 7],
     pub price: QuoteLotsPerBaseLot,
     pub size: BaseLots,
+    pub issued_at: UnixTimestamp,
     pub expires_at: UnixTimestamp,
     pub nonce: Nonce,
-}
+}   // 16 + 4×32 (program_id, maker, series, taker) + 8 + 5×8 = 192 bytes
 ```
 
-Added beyond the brief's field list, and why:
+Added beyond the brief's field list, and why (`issued_at` is explained in invariant 4):
 
 - `domain` and `program_id`: a signature for quotebook on devnet, or for another program that
   happens to sign a similar layout, must not be valid here.
@@ -78,9 +83,14 @@ Invariants of a fillable quote, checked on-chain in this order:
 1. The bytes come from a verified ed25519 instruction whose public key equals `maker` (5.1).
 2. `domain` and `program_id` match; `series` equals the series account passed in.
 3. `taker` is zero or equals the transaction's taker signer.
-4. `now < expires_at` and `expires_at - now <= series.max_quote_ttl`.
-5. `nonce >= maker_state.min_valid_nonce` and not yet used (4.2).
-6. `0 < fill_size <= size`, and `size`, `price` are multiples/inside the series' limits.
+4. `now < expires_at`, `expires_at − issued_at <= series.max_quote_ttl` and
+   `issued_at <= now + MAX_CLOCK_SKEW`. Bounding `expires_at − now` alone would not bound a
+   quote's lifetime (a 1-hour quote would simply become fillable in its last minute), and the
+   bitmap argument in 4.2 depends on a real lifetime bound. The Clock's `unix_timestamp` is a
+   stake-weighted estimate that can drift seconds from wall time; TTLs allow for that.
+5. `window_base <= nonce` and not yet used (4.2).
+6. `series.min_size <= fill_size <= size`, and `price` inside the series' limits. A dust fill
+   still consumes the nonce; documented.
 7. `price * fill_size * quote_lot_size` and `fill_size * base_lot_size` do not overflow `u64`.
 
 ```rust
@@ -107,7 +117,7 @@ pub enum QuotebookError {
     // quote state
     QuoteExpired,
     QuoteTtlTooLong,
-    NonceCancelled,                // nonce < min_valid_nonce
+    NonceCancelled,                // nonce below window_base after a cancel_all
     NonceUsed,
     NonceOutOfWindow,              // below the bitmap window base
     FillSizeInvalid,
@@ -148,33 +158,39 @@ and are `bytemuck::Pod`, loaded zero-copy.
 | Account | Seeds | Owner | Size | Written by |
 | --- | --- | --- | --- | --- |
 | `Config` | `["config"]` | quotebook | 8 + 32 + 8 = 48 | `init_config`, `set_config` (admin) |
-| `Series` | `["series", base_mint, quote_mint, series_index_le]` | quotebook | 8 + 32×2 + 8×4 + 8 + 8 = 120 | `create_series`, `set_series_paused` |
-| `MakerState` | `["maker", maker]` | quotebook | 8 + 32 + 8×3 + 512 = 576 | `init_maker`, `cancel_all`, `cancel_nonce`, `settle` |
-| Delegate authority | `["delegate"]` | none (PDA, no data) | 0 | never; signs token transfers |
+| `Series` | `["series", base_mint, quote_mint, series_index_le]` | quotebook | 128 | `create_series`, `set_series_paused` |
+| `MakerState` | `["maker", maker]` | quotebook | 8 + 32 + 8×3 + 8 + 2,048 = 2,120 | `init_maker`, `cancel_all`, `cancel_nonce`, `settle` |
+| Delegate authority | `["delegate", maker]` | none (PDA, no data) | 0 | never; signs that maker's token transfers |
 
 Field sketches:
 
 ```rust
 struct Config { hdr: Hdr, admin: Address, series_count: u64 }
 struct Series {
-    hdr: Hdr, base_mint: Address, quote_mint: Address,
+    hdr: Hdr, series_index: u64, base_mint: Address, quote_mint: Address,
     base_lot_size: u64, quote_lot_size: u64, max_quote_ttl: i64, min_size: u64,
     paused: u8, base_is_2022: u8, quote_is_2022: u8, _pad: [u8; 5],
     _reserved: [u8; 8],   // fee bps later
 }
 struct MakerState {
     hdr: Hdr, maker: Address,
-    min_valid_nonce: u64,       // cancel-all watermark
-    window_base: u64,           // lowest nonce tracked by the bitmap
+    window_base: u64,           // lowest fillable nonce; also the cancel-all watermark
     fills: u64,                 // counter, for clients
-    used: [u64; 64],            // 4,096-bit bitmap for nonces window_base .. window_base + 4096
+    _reserved: u64,
+    delegate_bump: u8, _pad: [u8; 7],
+    used: [u64; 256],           // 16,384-bit ring: bit (n mod 16,384) for nonces in the window
 }
 ```
 
-Token flow: makers do not deposit. Each maker approves the `delegate` PDA as SPL delegate on
-its own base and quote token accounts (with the allowance it is willing to trade); `settle`
-transfers maker ↔ taker directly with `transfer_checked`, the delegate PDA signing for the
-maker side and the taker signing for its own side. Rationale in 4.4.
+Token flow: makers do not deposit. Each maker approves its own `["delegate", maker]` PDA as SPL
+delegate on the token account it pays from (only the paying side needs approval), with the
+allowance it is willing to trade; `settle` transfers maker ↔ taker directly with
+`transfer_checked`, the maker's delegate PDA signing for the maker side and the taker signing
+for its own side. A per-maker delegate means a `settle` bug can only reach the maker named in
+the verified quote, never every maker's allowance. SPL allows one delegate per token account,
+so a maker cannot approve quotebook and another protocol on the same account; documented.
+`MakerState` is writable in every `settle`, so one maker's fills serialize within a block;
+fine for RFQ. Rationale in 4.4.
 
 ### 3.2 Instructions
 
@@ -184,13 +200,13 @@ maker side and the taker signing for its own side. Rationale in 4.4.
 | 1 | `create_series` | admin, payer | config (w), series (w), base_mint, quote_mint, system | creates `Series` |
 | 2 | `set_series_paused` | admin | config, series (w) | pause/unpause |
 | 3 | `init_maker` | maker, payer | maker_state (w), system | creates `MakerState` |
-| 4 | `cancel_all` | maker | maker_state (w) | `min_valid_nonce = new_min` (must increase) |
-| 5 | `cancel_nonce` | maker | maker_state (w) | marks one nonce used |
+| 4 | `cancel_all` | maker | maker_state (w) | slides `window_base` to `new_min` (must increase), clearing bits |
+| 5 | `cancel_nonce` | maker | maker_state (w) | marks one nonce used; a nonce beyond the window slides it first |
 | 6 | `settle` | taker | series, maker_state (w), maker (ro), delegate PDA, maker_base (w), maker_quote (w), taker_base (w), taker_quote (w), base_mint, quote_mint, base token program, quote token program, instructions sysvar | verifies and fills |
 | 7 | `close_maker` | maker | maker_state (w), rent receiver (w) | closes the account |
 
 `settle` data: `{ sig_ix_index: u8, fill_size: u64 }`. The quote itself is not in the settle
-data: the program reads it from the precompile instruction, which avoids a 160-byte copy and
+data: the program reads it from the precompile instruction, which avoids a 192-byte copy and
 removes "the settle args and the signed bytes disagree" as a class of bug.
 
 ### 3.3 Security checks per instruction
@@ -202,8 +218,12 @@ Every rule below gets a LiteSVM negative test with a forged or swapped account.
 - `init_config`: config PDA; admin signs.
 - `create_series`: admin signs and equals `config.admin`; series PDA from mints and
   `config.series_count`; mints owned by SPL Token or Token-2022; Token-2022 mints rejected if
-  they carry transfer-fee, transfer-hook, confidential-transfer, permanent-delegate or
-  non-transferable extensions; `base_mint != quote_mint`; lot sizes non-zero.
+  they carry transfer-fee, transfer-hook, confidential-transfer, permanent-delegate,
+  non-transferable, pausable or `DefaultAccountState = Frozen` extensions; `base_mint !=
+  quote_mint`; lot sizes non-zero.
+- Token-2022 account-level extensions at `settle`: a taker account with CPI Guard cannot
+  transfer via CPI, and a receiving account with MemoTransfer requires a memo. v1 rejects
+  both with a clear error; tests cover each.
 - `init_maker`, `cancel_*`, `close_maker`: maker signs; maker_state PDA from that maker;
   `cancel_all` rejects a non-increasing watermark.
 - `settle`:
@@ -253,15 +273,18 @@ message one byte short, and the precompile placed after `settle`.
 | --- | --- | --- | --- | --- |
 | Monotonic nonce (`nonce > last_filled`) | tiny | no: filling quote 7 kills 1 to 6 | none | a maker answering five takers at once loses four quotes per fill |
 | Used-nonce PDA per fill | create an account (~2,000+ CU and ~0.0009 SOL rent, refundable on close) | yes, unlimited | per fill | rent churn, account spam, a close flow |
-| **Sliding bitmap in `MakerState`** | set one bit, sometimes shift | yes, 4,096 in flight | 576 bytes once | nonces far ahead of the window slide it |
+| **Sliding bitmap in `MakerState`** | set one bit, sometimes clear words | yes, 16,384 in flight | 2 KiB once | nonces far ahead of the window slide it |
 
-**Recommended: sliding bitmap.** Makers allocate nonces from a counter. A nonce `n` is fillable
-iff `n >= min_valid_nonce`, `n >= window_base` and bit `n − window_base` is clear. If
-`n >= window_base + 4096`, the window slides forward to `n − 4095` and the bits that fall off
-are dropped, which marks those older nonces unfillable (they are below `window_base`). Because
-quotes have a short TTL (`max_quote_ttl`, proposed 60 s), a maker issuing fewer than 4,096
-quotes per TTL never loses a live quote to sliding; the maker service enforces that rate.
-`cancel_all` is the single watermark bump the brief asks for; `cancel_nonce` sets one bit.
+**Recommended: sliding bitmap.** Makers allocate nonces from a counter. One watermark, `window_base`, is both the bitmap
+base and the brief's `min_valid_nonce`: a nonce `n` is fillable iff `window_base <= n <
+window_base + 16,384` and bit `n mod 16,384` of the ring is clear (error codes
+`NonceCancelled` and `NonceOutOfWindow` stay distinct for diagnostics). A fill with `n` beyond
+the window slides `window_base` to `n − 16,383`, clearing the words passed over (a ring, so no
+word shifting). `cancel_all(new_min)` is the single slide the brief asks for. Because a
+quote's lifetime is bounded by `max_quote_ttl` (proposed 60 s), a maker issuing fewer than
+16,384 quotes per TTL (about 270 per second) never loses a live quote to sliding; the maker
+service enforces that rate. 2 KiB of bitmap costs about 0.015 SOL of rent once; milestone 4
+measures the worst-case slide CU.
 
 ### 4.3 Partial fills
 
@@ -309,7 +332,8 @@ can hold compute-budget instructions or several fills. The program still require
 Branch per milestone `feat/m<N>-<name>`, one PR each.
 
 1. **Core types and encoding.** `quotebook-core` with `Quote`, newtypes, errors, `encode`/
-   `decode`, bitmap. *Done when* proptest shows `decode(encode(q)) == q`, the bitmap model test
+   `decode`, bitmap. *Done when* proptest shows `decode(encode(q)) == q` at aligned and
+   unaligned offsets, `decode` rejects invalid `side` bytes, the bitmap model test
    (random fills, cancels, slides against a `BTreeSet` reference) passes, and `make pre-push`
    is clean.
 2. **Program skeleton and accounts.** `init_config`, `create_series`, `init_maker`,
@@ -326,7 +350,7 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
    signature, and an end-to-end LiteSVM test uses only the SDK.
 6. **Maker service.** *Done when* a local demo (maker service + taker CLI + LiteSVM or
    solana-test-validator) requests, receives and settles a quote priced by market-maker-rs,
-   and the service refuses to exceed the 4,096-per-TTL nonce rate.
+   and the service refuses to exceed the 16,384-per-TTL nonce rate.
 7. **Devnet and docs.** *Done when* the program is deployed to devnet, README and
    `docs/instructions.md` are written, and v0.1 crates are ready to publish (published after
    your go-ahead).
@@ -355,8 +379,10 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
 1. Fees: none in v1, or a taker fee to a treasury from day one?
 2. Series creation: admin-only (proposed) or permissionless?
 3. `max_quote_ttl`: 60 s proposed. Shorter for volatile underlyings?
-4. Are open quotes (`taker = 0`) wanted at all in v1, or always taker-bound?
+4. Open quotes (`taker = 0`): the quotebook session suggests taker-bound by default with open
+   quotes allowed. OK?
 5. otc-rfq: copy the two service modules, or extract a shared crate both use?
-6. Pinocchio 0.12 (released today) or 0.11 like matchbook? Proposal: 0.12.
-7. Should `settle` support several fills (several makers) in one instruction for multi-leg
-   RFQs, as metalbook spreads might want?
+6. Pinocchio 0.12 (released 2026-10-28) or 0.11 like matchbook? The quotebook session leans
+   0.11 unless matchbook moves too.
+7. Resolved in review: no multi-fill instruction in v1; an explicit `sig_ix_index` already
+   allows several `settle` instructions (one per maker or leg) in one atomic transaction.
