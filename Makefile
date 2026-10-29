@@ -13,21 +13,34 @@ SBF_ARCH ?= v3
 build:
 	cargo build --workspace
 
-# Build the program (and with it the no_std core) for SBF into target/deploy. Fails if any
-# stack frame exceeds 4 KiB: cargo build-sbf reports that only as an "Error: Function ...
-# overflows the maximum allowed frame space" line and still exits 0, and the overflow
-# silently corrupts locals (rules/global_rules.md). Older toolchains say "Stack offset ...
-# exceeded max offset". Cached builds print the line again, so the check holds on rebuilds.
-SBF_FRAME_OVERFLOW := maximum allowed frame space|exceeded max offset
-
+# Build the program (and with it the no_std core) for SBF into target/deploy.
+# cargo-build-sbf's exit status is kept (no pipe), and scripts/check-sbf-log.sh (shared with
+# optfix) fails the build on a stack frame above 4 KiB, which cargo-build-sbf only warns
+# about. Cargo prints the line again on cached builds, so a no-op rebuild still fails.
 .PHONY: program
 program:
-	@out=$$(cargo build-sbf --manifest-path program/Cargo.toml --arch $(SBF_ARCH) 2>&1); \
-	status=$$?; printf '%s\n' "$$out"; \
-	if [ $$status -ne 0 ]; then exit $$status; fi; \
-	if printf '%s\n' "$$out" | grep -Eq '$(SBF_FRAME_OVERFLOW)'; then \
-		echo "program: an SBF stack frame exceeds 4 KiB (see above)"; exit 1; \
-	fi
+	@mkdir -p target
+	@cargo build-sbf --manifest-path program/Cargo.toml --arch $(SBF_ARCH) \
+		> target/build-sbf.log 2>&1; status=$$?; cat target/build-sbf.log; \
+		if [ $$status -ne 0 ]; then echo "program: cargo-build-sbf failed ($$status)"; exit $$status; fi
+	@sh scripts/check-sbf-log.sh target/build-sbf.log
+
+# Failing control for `program`: the log check must reject a frame overflow in both wordings,
+# and a failing cargo-build-sbf must fail the target.
+.PHONY: program-control
+program-control:
+	@mkdir -p target
+	@printf '%s\n' 'Error: Function entrypoint overflows the maximum allowed frame space by accessing an offset 64 bytes greater than the maximum of 4096.' \
+		> target/sbf-control.log
+	@if sh scripts/check-sbf-log.sh target/sbf-control.log > /dev/null; then \
+		echo "program-control: the log check accepted a frame overflow"; exit 1; fi
+	@printf '%s\n' 'Error: Function _ZN4main Stack offset of 4160 exceeded max offset of 4096 by 64 bytes' \
+		> target/sbf-control.log
+	@if sh scripts/check-sbf-log.sh target/sbf-control.log > /dev/null; then \
+		echo "program-control: the log check accepted the older wording"; exit 1; fi
+	@if $(MAKE) --no-print-directory program SBF_ARCH=no-such-arch > /dev/null 2>&1; then \
+		echo "program-control: make program succeeded with a failing cargo-build-sbf"; exit 1; fi
+	@echo "program-control: a frame overflow and a failing cargo-build-sbf both fail make program"
 
 # Measure every instruction's CU in LiteSVM and regenerate docs/benchmarks.md
 .PHONY: bench
@@ -69,7 +82,7 @@ doc:
 
 # Pre-push checks: must pass with zero warnings
 .PHONY: pre-push
-pre-push: fmt-check lint lint-control program test doc
+pre-push: fmt-check lint lint-control program-control program test doc
 
 .PHONY: clean
 clean:
