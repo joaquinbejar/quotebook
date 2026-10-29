@@ -1,0 +1,47 @@
+[workspace]
+members = ["quotebook-core", "lint-control"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Joaquin Bejar <jb@taunais.com>"]
+license = "MIT"
+repository = "https://github.com/joaquinbejar/quotebook"
+
+[workspace.dependencies]
+# Versions checked on crates.io (max_stable_version) on 2026-10-29.
+bytemuck = { version = "1.25", default-features = false, features = ["derive", "must_cast", "min_const_generics"] }
+proptest = "1.12"
+solana-address = { version = "2.9", default-features = false, features = ["bytemuck"] }
+quotebook-core = { path = "quotebook-core", version = "0.1" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+# Pinocchio's entrypoint macros test `target_os = "solana"`; `lint_control` is set only by
+# `make lint-control`.
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(target_os, values("solana"))',
+    'cfg(lint_control)',
+] }
+
+[workspace.lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+integer_division = "deny"
+float_arithmetic = "deny"
+panic_in_result_fn = "deny"
+manual_assert = "deny"
+disallowed_macros = "deny"          # list in clippy.toml
+
+[profile.release]
+overflow-checks = true
+codegen-units = 1
+lto = "fat"
