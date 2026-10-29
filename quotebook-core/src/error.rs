@@ -35,9 +35,9 @@ pub enum QuotebookError {
     SigVerifyNotSelfContained = 110,
     /// The signed public key is not `quote.maker`.
     SignerMismatch = 111,
-    /// The signed message is not exactly `Quote::LEN` bytes.
+    /// The signed message is not exactly [`Quote::LEN`](crate::Quote::LEN) bytes.
     QuoteLengthMismatch = 112,
-    /// The quote's domain tag is not `QUOTE_DOMAIN`.
+    /// The quote's domain tag is not [`QUOTE_DOMAIN`](crate::QUOTE_DOMAIN).
     WrongDomain = 113,
     /// The quote was signed for another program.
     WrongProgram = 114,

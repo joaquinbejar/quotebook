@@ -3,8 +3,8 @@
 //! Each newtype wraps one integer and has no conversion into another, so the compiler rejects a
 //! price passed as a size. They are `#[repr(transparent)]` and `Pod`, so program accounts embed
 //! them directly. Zero is representable in every type; where zero is invalid for a quote
-//! (`price`, `size`), `Quote::new` and
-//! `Quote::decode` reject it.
+//! (`price`, `size`), [`Quote::new`](crate::Quote::new) and
+//! [`Quote::decode`](crate::Quote::decode) reject it.
 
 use bytemuck::{Pod, Zeroable};
 use solana_address::Address;

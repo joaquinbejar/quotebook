@@ -5,6 +5,8 @@
 //!
 //! - the quantity newtypes ([`BaseLots`], [`QuoteLotsPerBaseLot`], [`Nonce`], ...) and
 //!   [`Side`];
+//! - the signed [`Quote`] and its canonical 208-byte encoding ([`Quote::encode`],
+//!   [`Quote::decode`]);
 //! - the program's error codes, [`QuotebookError`].
 //!
 //! This is milestone 1 of `docs/PLAN.md`.
@@ -13,9 +15,11 @@
 
 mod error;
 mod quantity;
+mod quote;
 
 pub use error::QuotebookError;
 pub use quantity::{
     BaseAtoms, BaseLots, Nonce, QuoteAtoms, QuoteLotsPerBaseLot, SeriesId, Side, UnixTimestamp,
 };
+pub use quote::{Quote, QuoteTerms, MAX_CLOCK_SKEW, QUOTE_DOMAIN};
 pub use solana_address::Address;
