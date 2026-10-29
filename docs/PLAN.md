@@ -84,7 +84,7 @@ Invariants of a fillable quote, checked on-chain in this order:
 2. `domain` and `program_id` match; `series` equals the series account passed in.
 3. `taker` is zero or equals the transaction's taker signer.
 4. `now < expires_at`, `expires_at − issued_at <= series.max_quote_ttl` and
-   `issued_at <= now + MAX_CLOCK_SKEW`. Bounding `expires_at − now` alone would not bound a
+   `issued_at <= now + MAX_CLOCK_SKEW` (a program constant, proposed 10 s). Bounding `expires_at − now` alone would not bound a
    quote's lifetime (a 1-hour quote would simply become fillable in its last minute), and the
    bitmap argument in 4.2 depends on a real lifetime bound. The Clock's `unix_timestamp` is a
    stake-weighted estimate that can drift seconds from wall time; TTLs allow for that.
@@ -176,7 +176,7 @@ struct MakerState {
     hdr: Hdr, maker: Address,
     window_base: u64,           // lowest fillable nonce; also the cancel-all watermark
     fills: u64,                 // counter, for clients
-    _reserved: u64,
+    last_cancel_all: u64,       // tells NonceCancelled from NonceOutOfWindow
     delegate_bump: u8, _pad: [u8; 7],
     used: [u64; 256],           // 16,384-bit ring: bit (n mod 16,384) for nonces in the window
 }
@@ -232,7 +232,8 @@ Every rule below gets a LiteSVM negative test with a forged or swapped account.
     the mints' owners.
   - `maker_state` PDA from `quote.maker`; `maker` account key equals `quote.maker`.
   - Token accounts: maker's are owned (SPL owner field) by `quote.maker`, taker's by the taker,
-    each with the right mint; delegate PDA from its seed.
+    each with the right mint; delegate PDA re-derived from `["delegate", quote.maker]` with
+    `MakerState.delegate_bump`.
   - Instructions sysvar address equals the sysvar id (the Pinocchio `Instructions::try_from`
     check), then the ed25519 checks of 5.1.
   - Quote invariants 2 to 7 of section 2.
@@ -275,12 +276,15 @@ message one byte short, and the precompile placed after `settle`.
 | Used-nonce PDA per fill | create an account (~2,000+ CU and ~0.0009 SOL rent, refundable on close) | yes, unlimited | per fill | rent churn, account spam, a close flow |
 | **Sliding bitmap in `MakerState`** | set one bit, sometimes clear words | yes, 16,384 in flight | 2 KiB once | nonces far ahead of the window slide it |
 
-**Recommended: sliding bitmap.** Makers allocate nonces from a counter. One watermark, `window_base`, is both the bitmap
-base and the brief's `min_valid_nonce`: a nonce `n` is fillable iff `window_base <= n <
-window_base + 16,384` and bit `n mod 16,384` of the ring is clear (error codes
-`NonceCancelled` and `NonceOutOfWindow` stay distinct for diagnostics). A fill with `n` beyond
-the window slides `window_base` to `n − 16,383`, clearing the words passed over (a ring, so no
-word shifting). `cancel_all(new_min)` is the single slide the brief asks for. Because a
+**Recommended: sliding bitmap.** Makers allocate nonces from a counter. One watermark,
+`window_base`, is both the bitmap base and the brief's `min_valid_nonce`. For a nonce `n`:
+reject if `n < window_base`; if `n >= window_base + 16,384`, slide first to `n − 16,383`;
+then check and set bit `n mod 16,384` of the ring. Sliding from `B` to `B'` clears exactly the
+slots of nonces `[B, B')` (`min(B' − B, 16,384)` bits), with masked clears on the edge words
+because `B` and `B'` need not be multiples of 64; the model test includes unaligned
+`cancel_all` values. `MakerState._reserved` becomes `last_cancel_all`, so a rejected
+`n < window_base` reports `NonceCancelled` when `n < last_cancel_all` and
+`NonceOutOfWindow` otherwise. `cancel_all(new_min)` is the single slide the brief asks for. Because a
 quote's lifetime is bounded by `max_quote_ttl` (proposed 60 s), a maker issuing fewer than
 16,384 quotes per TTL (about 270 per second) never loses a live quote to sliding; the maker
 service enforces that rate. 2 KiB of bitmap costs about 0.015 SOL of rent once; milestone 4
@@ -301,7 +305,7 @@ Escrow (maker deposits into a program vault) adds deposit/withdraw instructions 
 capital per venue; delegate approval lets the maker trade from its wallet and cap exposure
 with the approved amount, at the cost that a revoked approval makes a fill fail (which only
 hurts the maker's fill rate, never the taker's funds, since the transaction is atomic).
-**Recommended: delegate approval.** The delegate is one program-wide PDA, so an approval is
+**Recommended: delegate approval.** The delegate is a per-maker PDA (3.1), and an approval is
 per token account, not per series.
 
 ### 4.5 Rounding
