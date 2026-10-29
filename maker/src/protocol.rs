@@ -53,7 +53,7 @@ pub enum RejectReason {
     Size,
     /// No price passed the model and the bounds.
     Pricing,
-    /// The issuance bound refuses another nonce right now.
+    /// The issuance bound, or the cold start after a restart, refuses a nonce right now.
     RateLimited,
     /// Internal failure.
     Internal,

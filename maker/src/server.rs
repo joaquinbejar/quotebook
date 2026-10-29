@@ -135,8 +135,8 @@ fn reject(request_id: u64, reason: RejectReason, message: impl Into<String>) -> 
 }
 
 impl MakerService {
-    /// Builds the service. `issuer` must start at or above the maker's on-chain
-    /// `window_base` and above every nonce issued before.
+    /// Builds the service. `issuer` comes from [`NonceIssuer::resume`] on every restart, or
+    /// [`NonceIssuer::fresh`] for a key that has never signed.
     ///
     /// # Errors
     ///
@@ -163,6 +163,24 @@ impl MakerService {
             inventory,
             clock,
         })
+    }
+
+    /// Applies the maker's on-chain window, read at `read_at` (see
+    /// [`NonceIssuer::refresh`]). A resumed service quotes only after a refresh with a window
+    /// read at or after the end of its cold start.
+    ///
+    /// # Errors
+    ///
+    /// The issuer's refresh error, or `Invalid` if its lock is poisoned.
+    pub fn refresh_window(
+        &self,
+        window: &quotebook_core::NonceWindow,
+        read_at: UnixTimestamp,
+    ) -> Result<(), IssueError> {
+        self.issuer
+            .lock()
+            .map_err(|_| IssueError::Invalid)?
+            .refresh(window, read_at)
     }
 
     /// The maker's address.
@@ -217,7 +235,7 @@ impl MakerService {
         let nonce = match self.issuer.lock() {
             Ok(mut issuer) => match issuer.issue(issued_at, expires_at) {
                 Ok(n) => n,
-                Err(e @ IssueError::TooSoon { .. }) => {
+                Err(e @ (IssueError::TooSoon { .. } | IssueError::ColdStart { .. })) => {
                     return reject(id, RejectReason::RateLimited, e.to_string())
                 }
                 Err(e) => return reject(id, RejectReason::Internal, e.to_string()),

@@ -1,7 +1,7 @@
 //! Local demo: two maker services and a taker CLI flow against quotebook in LiteSVM.
 //!
-//! 1. LiteSVM with the program (`make program` first), a series of two 6/6-decimal SPL mints,
-//!    two makers with approved delegates, and a taker.
+//! 1. LiteSVM with the program (`make program` first), a series of two 6-decimal SPL mints,
+//!    two makers with approved delegates, and a taker (`tests/common`).
 //! 2. Each maker runs the WebSocket service on localhost, pricing with market-maker-rs from
 //!    a configured mid with a different risk aversion, so the two asks differ.
 //! 3. The taker asks both for a firm quote to buy, verifies each (signature and every term
@@ -19,97 +19,23 @@
     missing_docs
 )]
 
-use std::path::PathBuf;
+#[path = "../tests/common/mod.rs"]
+mod common;
+
 use std::str::FromStr;
 use std::sync::Arc;
 
-use litesvm::LiteSVM;
+use common::{Chain, NOW};
 use quotebook_maker::client::{self, Expectation, SignedQuote};
 use quotebook_maker::issuer::NonceIssuer;
 use quotebook_maker::keys::MakerKey;
-use quotebook_maker::market::MarketInfo;
 use quotebook_maker::pricing::PricingParams;
 use quotebook_maker::protocol::{QuoteRequest, TakerSide};
 use quotebook_maker::server::{FixedInventory, FixedMid, FixedTime, MakerService, ServiceConfig};
-use quotebook_sdk::core::instruction::CreateSeriesArgs;
-use quotebook_sdk::core::{BaseLots, Nonce, Seconds, Side, UnixTimestamp};
-use quotebook_sdk::{decode, ix, pda, SettleAccounts};
+use quotebook_sdk::core::{BaseLots, Seconds, Side, UnixTimestamp};
 use rust_decimal::Decimal;
-use solana_account::Account;
 use solana_address::Address;
-use solana_instruction::Instruction;
-use solana_keypair::Keypair;
 use solana_signer::Signer;
-use solana_transaction::Transaction;
-
-pub const PROGRAM_ID: Address = Address::new_from_array([0x51; 32]);
-pub const NOW: i64 = 1_700_000_000;
-const FUNDS: u64 = 1_000_000_000_000;
-
-fn token_program() -> Address {
-    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        .parse()
-        .unwrap()
-}
-
-struct Vm {
-    svm: LiteSVM,
-    payer: Keypair,
-}
-
-impl Vm {
-    fn send(&mut self, ixs: &[Instruction], signers: &[&Keypair]) {
-        self.svm.expire_blockhash();
-        let mut all = vec![&self.payer];
-        all.extend_from_slice(signers);
-        let tx = Transaction::new_signed_with_payer(
-            ixs,
-            Some(&self.payer.pubkey()),
-            &all,
-            self.svm.latest_blockhash(),
-        );
-        if let Err(f) = self.svm.send_transaction(tx) {
-            panic!("{:?}\n{}", f.err, f.meta.pretty_logs());
-        }
-    }
-
-    fn set(&mut self, address: Address, data: Vec<u8>) {
-        let lamports = self.svm.minimum_balance_for_rent_exemption(data.len());
-        let account = Account {
-            lamports,
-            data,
-            owner: token_program(),
-            executable: false,
-            rent_epoch: 0,
-        };
-        self.svm.set_account(address, account).unwrap();
-    }
-
-    fn mint(&mut self) -> Address {
-        let address = Keypair::new().pubkey();
-        let mut d = vec![0u8; 82];
-        d[44] = 6;
-        d[45] = 1;
-        self.set(address, d);
-        address
-    }
-
-    fn token_account(&mut self, mint: &Address, owner: &Address) -> Address {
-        let address = Keypair::new().pubkey();
-        let mut d = vec![0u8; 165];
-        d[0..32].copy_from_slice(mint.as_ref());
-        d[32..64].copy_from_slice(owner.as_ref());
-        d[64..72].copy_from_slice(&FUNDS.to_le_bytes());
-        d[108] = 1;
-        self.set(address, d);
-        address
-    }
-
-    fn amount(&self, account: &Address) -> u64 {
-        let data = self.svm.get_account(account).unwrap().data;
-        u64::from_le_bytes(data[64..72].try_into().unwrap())
-    }
-}
 
 /// What the demo did, for the test and the printout.
 #[derive(Debug)]
@@ -119,117 +45,22 @@ pub struct Report {
     pub price_ticks: u64,
     pub taker_base_delta: i128,
     pub taker_quote_delta: i128,
-}
-
-struct MakerSetup {
-    key: Keypair,
-    base: Address,
-    quote: Address,
+    pub fills: u64,
 }
 
 pub async fn run() -> Report {
-    // 1. Chain: program, config, series, makers, taker.
-    let mut svm = LiteSVM::new();
-    let so =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/deploy/quotebook_program.so");
-    svm.add_program_from_file(PROGRAM_ID, &so)
-        .unwrap_or_else(|e| panic!("load {}: {e}; run `make program` first", so.display()));
-    let payer = Keypair::new();
-    let admin = Keypair::new();
-    svm.airdrop(&payer.pubkey(), 100_000_000_000).unwrap();
-    svm.airdrop(&admin.pubkey(), 1_000_000_000).unwrap();
-    let mut clock: solana_clock::Clock = svm.get_sysvar();
-    clock.unix_timestamp = NOW;
-    svm.set_sysvar(&clock);
-    let program_data = pda::program_data(&PROGRAM_ID).0;
-    let mut pd = svm.get_account(&program_data).unwrap();
-    pd.data[12] = 1;
-    pd.data[13..45].copy_from_slice(admin.pubkey().as_ref());
-    svm.set_account(program_data, pd).unwrap();
-    let mut vm = Vm { svm, payer };
-    let payer = vm.payer.pubkey();
+    // 1. Chain.
+    let mut chain = Chain::new();
+    let makers = [chain.maker(), chain.maker()];
+    let taker = chain.taker();
+    let market = chain.market;
 
-    let deployment = quotebook_sdk::deployment_id_from_genesis_hash(&[42; 32]);
-    vm.send(
-        &[ix::init_config(
-            &PROGRAM_ID,
-            &admin.pubkey(),
-            &payer,
-            deployment,
-        )],
-        &[&admin],
-    );
-    let base_mint = vm.mint();
-    let quote_mint = vm.mint();
-    // 1 base lot = 0.01 base token; 1 quote lot = 0.0001 quote token.
-    let args = CreateSeriesArgs {
-        base_lot_size: 10_000,
-        quote_lot_size: 100,
-        max_quote_ttl: 60,
-        min_size: 1,
-    };
-    vm.send(
-        &[ix::create_series(
-            &PROGRAM_ID,
-            &admin.pubkey(),
-            &payer,
-            &base_mint,
-            &quote_mint,
-            0,
-            &args,
-        )],
-        &[&admin],
-    );
-    let series = pda::series(&PROGRAM_ID, &base_mint, &quote_mint, 0).0;
-    let s = vm.svm.get_account(&series).unwrap();
-    let s = decode::series(&PROGRAM_ID, &s.owner, &s.data).unwrap();
-
-    let mut makers = Vec::new();
-    for _ in 0..2 {
-        let key = Keypair::new();
-        vm.svm.airdrop(&key.pubkey(), 1_000_000_000).unwrap();
-        vm.send(
-            &[ix::init_maker(&PROGRAM_ID, &key.pubkey(), &payer)],
-            &[&key],
-        );
-        let base = vm.token_account(&base_mint, &key.pubkey());
-        let quote = vm.token_account(&quote_mint, &key.pubkey());
-        // The taker buys, so the maker pays base: approve its delegate on the base account.
-        vm.send(
-            &[ix::approve_delegate(
-                &PROGRAM_ID,
-                &token_program(),
-                &base,
-                &key.pubkey(),
-                FUNDS,
-            )],
-            &[&key],
-        );
-        makers.push(MakerSetup { key, base, quote });
-    }
-    let taker = Keypair::new();
-    vm.svm.airdrop(&taker.pubkey(), 1_000_000_000).unwrap();
-    let taker_base = vm.token_account(&base_mint, &taker.pubkey());
-    let taker_quote = vm.token_account(&quote_mint, &taker.pubkey());
-
-    // 2. One service per maker, on localhost.
-    let market = MarketInfo {
-        program_id: PROGRAM_ID,
-        deployment: s.deployment_id,
-        series,
-        base_decimals: 6,
-        quote_decimals: 6,
-        base_lot_size: s.base_lot_size.get(),
-        quote_lot_size: s.quote_lot_size.get(),
-        max_quote_ttl: s.max_quote_ttl,
-        min_size: s.min_size,
-    };
+    // 2. One service per maker, on localhost. These keys have never signed, so their
+    // issuers start fresh at the on-chain watermark.
     let d = |v: &str| Decimal::from_str(v).unwrap();
     let mut urls = Vec::new();
     for (i, maker) in makers.iter().enumerate() {
-        let state = pda::maker_state(&PROGRAM_ID, &maker.key.pubkey()).0;
-        let state = vm.svm.get_account(&state).unwrap();
-        let state = decode::maker_state(&PROGRAM_ID, &state.owner, &state.data).unwrap();
+        let window = chain.window(&maker.key.pubkey());
         let config = ServiceConfig {
             market,
             pricing: PricingParams {
@@ -245,7 +76,7 @@ pub async fn run() -> Report {
         let service = MakerService::new(
             MakerKey::new(maker.key.insecure_clone()),
             config,
-            NonceIssuer::new(state.nonces.window_base()),
+            NonceIssuer::fresh(window.window_base()),
             Box::new(FixedMid(d("25.00"))),
             Box::new(FixedInventory(Decimal::ZERO)),
             Box::new(FixedTime(UnixTimestamp::new(NOW))),
@@ -260,20 +91,20 @@ pub async fn run() -> Report {
     let size = BaseLots::new(40);
     let request = QuoteRequest {
         request_id: 1,
-        series: series.to_string(),
-        taker: taker.pubkey().to_string(),
+        series: market.series.to_string(),
+        taker: taker.key.pubkey().to_string(),
         taker_side: TakerSide::Buy,
         size_lots: size.get(),
     };
     let expected = Expectation {
-        program_id: PROGRAM_ID,
-        deployment,
-        series,
-        taker: taker.pubkey(),
+        program_id: market.program_id,
+        deployment: market.deployment,
+        series: market.series,
+        taker: taker.key.pubkey(),
         taker_side: TakerSide::Buy,
         size,
         now: UnixTimestamp::new(NOW),
-        max_quote_ttl: s.max_quote_ttl,
+        max_quote_ttl: market.max_quote_ttl,
     };
     let mut quotes: Vec<SignedQuote> = Vec::new();
     for url in &urls {
@@ -288,38 +119,18 @@ pub async fn run() -> Report {
     let best = client::rank(quotes, TakerSide::Buy)[0];
     let winner = best.quote.terms().maker;
     assert_eq!(best.quote.terms().side, Side::Ask);
-    let m = makers.iter().find(|m| m.key.pubkey() == winner).unwrap();
+    let maker = makers.iter().find(|m| m.key.pubkey() == winner).unwrap();
 
-    let accounts = SettleAccounts {
-        taker: taker.pubkey(),
-        base_mint,
-        quote_mint,
-        base_token_program: token_program(),
-        quote_token_program: token_program(),
-        maker_base: m.base,
-        maker_quote: m.quote,
-        taker_base,
-        taker_quote,
-    };
-    let (b0, q0) = (vm.amount(&taker_base), vm.amount(&taker_quote));
-    let pair = quotebook_sdk::settle_instructions(
-        &PROGRAM_ID,
-        &best.quote,
-        &best.signature,
-        &accounts,
-        size,
-        0,
-    );
-    vm.send(&pair, &[&taker]);
-    let (b1, q1) = (vm.amount(&taker_base), vm.amount(&taker_quote));
-    let state = pda::maker_state(&PROGRAM_ID, &winner).0;
-    let state = vm.svm.get_account(&state).unwrap();
-    let state = decode::maker_state(&PROGRAM_ID, &state.owner, &state.data).unwrap();
-    assert_eq!(state.fills, 1);
-    assert!(state
-        .nonces
-        .check(Nonce::new(best.quote.terms().nonce.get()))
-        .is_err());
+    let (b0, q0) = (chain.amount(&taker.base), chain.amount(&taker.quote));
+    chain.settle(&best, maker, &taker, size).unwrap();
+    let (b1, q1) = (chain.amount(&taker.base), chain.amount(&taker.quote));
+    let window = chain.window(&winner);
+    assert!(window.check(best.quote.terms().nonce).is_err());
+    let state = quotebook_sdk::pda::maker_state(&common::PROGRAM_ID, &winner).0;
+    let state = chain.svm.get_account(&state).unwrap();
+    let fills = quotebook_sdk::decode::maker_state(&common::PROGRAM_ID, &state.owner, &state.data)
+        .unwrap()
+        .fills;
 
     Report {
         quotes: summary,
@@ -327,6 +138,7 @@ pub async fn run() -> Report {
         price_ticks: best.quote.terms().price.get(),
         taker_base_delta: i128::from(b1) - i128::from(b0),
         taker_quote_delta: i128::from(q1) - i128::from(q0),
+        fills,
     }
 }
 

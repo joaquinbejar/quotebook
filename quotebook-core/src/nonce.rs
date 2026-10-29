@@ -110,6 +110,37 @@ impl NonceWindow {
         self.last_cancel_all
     }
 
+    /// The highest nonce marked used (filled or cancelled) in the window, if any. A maker
+    /// resuming after a restart starts above it and above `window_base`.
+    #[must_use]
+    pub fn highest_used(&self) -> Option<Nonce> {
+        let base = self.window_base.get();
+        let base_slot = base & SLOT_MASK;
+        let mut best: Option<u64> = None;
+        for (index, word) in self.used.iter().enumerate() {
+            let mut bits = *word;
+            while bits != 0 {
+                let bit = u64::from(bits.trailing_zeros());
+                // Clear that bit. (`isolate_lowest_one` is not stable on the SBF toolchain.)
+                bits &= !1u64
+                    .checked_shl(u32::try_from(bit).unwrap_or(0))
+                    .unwrap_or(0);
+                let Some(slot) = u64::try_from(index)
+                    .ok()
+                    .and_then(|i| i.checked_mul(WORD_BITS))
+                    .and_then(|v| v.checked_add(bit))
+                else {
+                    continue;
+                };
+                // Distance above the base, going around the ring once (modulo 16,384).
+                let offset = slot.wrapping_sub(base_slot) & SLOT_MASK;
+                best = Some(best.map_or(offset, |b| b.max(offset)));
+            }
+        }
+        best.and_then(|offset| base.checked_add(offset))
+            .map(Nonce::new)
+    }
+
     /// How many nonces inside the window are marked used.
     #[must_use]
     pub fn used_count(&self) -> u32 {
@@ -422,6 +453,22 @@ mod tests {
         assert_eq!(w.consume(n(u64::MAX)), Err(QuotebookError::NonceUsed));
         w.cancel_all(n(u64::MAX)).unwrap();
         assert_eq!(w.check(n(u64::MAX)), Err(QuotebookError::NonceUsed));
+    }
+
+    #[test]
+    fn test_nonce_window_highest_used() {
+        let mut w = NonceWindow::new();
+        assert_eq!(w.highest_used(), None);
+        w.consume(n(5)).unwrap();
+        w.consume(n(70)).unwrap();
+        assert_eq!(w.highest_used(), Some(n(70)));
+        // Across the ring's wrap: base 16,000, used 16,010 and 20,000 (slot 3,616).
+        w.cancel_all(n(16_000)).unwrap();
+        w.consume(n(16_010)).unwrap();
+        w.consume(n(20_000)).unwrap();
+        assert_eq!(w.highest_used(), Some(n(20_000)));
+        w.consume(n(16_000 + WINDOW_BITS - 1)).unwrap();
+        assert_eq!(w.highest_used(), Some(n(16_000 + WINDOW_BITS - 1)));
     }
 
     #[test]

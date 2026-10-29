@@ -35,4 +35,5 @@ async fn test_demo_settles_the_best_of_two_makers() {
         "{}",
         r.price_ticks
     );
+    assert_eq!(r.fills, 1);
 }

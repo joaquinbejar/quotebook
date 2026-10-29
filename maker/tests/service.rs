@@ -91,7 +91,7 @@ fn service(
     let s = MakerService::new(
         MakerKey::new(key.insecure_clone()),
         config(max_deviation),
-        NonceIssuer::new(Nonce::new(0)),
+        NonceIssuer::fresh(Nonce::new(0)),
         feed,
         Box::new(FixedInventory(Decimal::ZERO)),
         Box::new(clock.clone()),
@@ -206,7 +206,7 @@ fn test_service_config_is_checked() {
     let r = MakerService::new(
         MakerKey::new(Keypair::new()),
         cfg,
-        NonceIssuer::new(Nonce::new(0)),
+        NonceIssuer::fresh(Nonce::new(0)),
         Box::new(FixedMid(d("25"))),
         Box::new(FixedInventory(Decimal::ZERO)),
         Box::new(c.clone()),
@@ -217,7 +217,7 @@ fn test_service_config_is_checked() {
     let r = MakerService::new(
         MakerKey::new(Keypair::new()),
         cfg,
-        NonceIssuer::new(Nonce::new(0)),
+        NonceIssuer::fresh(Nonce::new(0)),
         Box::new(FixedMid(d("25"))),
         Box::new(FixedInventory(Decimal::ZERO)),
         Box::new(c.clone()),
