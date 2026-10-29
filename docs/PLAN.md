@@ -443,10 +443,18 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
    Token-2022) pass and every negative test listed in 4.1 and 3.3 is in `program/tests/sigverify.rs`
    and passes.
 4. **Benchmarks.** *Done when* `docs/benchmarks.md` lists the CU of every instruction, `settle`
-   including the precompile, and a comparison row against a fill on matchbook (IOC, 1 fill) on
-   the same LiteSVM.
+   in its worst case for each token program and including the precompile (0 CU, charged as a
+   signature in the fee), and a comparison with matchbook's IOC fill. Decided in M4: the
+   matchbook figures are cited from matchbook's own LiteSVM bench (commit `72efa6d`, IOC 1
+   fill 1,660 CU, wallet swap 1 fill 4,487 CU) rather than re-run here, marked as a
+   cross-repo citation with the design differences.
 5. **Taker SDK.** *Done when* `quotebook-sdk` builds the two instructions from a `Quote` and a
    signature, and an end-to-end LiteSVM test uses only the SDK.
+   Built in M5: `sdk/` with `pda` (every PDA), `ix` (a builder per instruction, plus the
+   token-program `Approve` a maker sends for its delegate), `settle_instructions` (precompile
+   + settle), `decode` (program accounts, owner checked) and `deployment_id_from_genesis_hash`.
+   The account layouts, instruction tags and argument encodings moved into `quotebook-core`
+   (`accounts`, `instruction`), so the program and the SDK share one definition.
 6. **Maker service.** *Done when* a local demo (maker service + taker CLI + LiteSVM or
    solana-test-validator) requests, receives and settles a quote priced by market-maker-rs,
    and the service refuses to stamp a nonce below `min_issued_at_beyond_window` of the quotes
@@ -501,7 +509,9 @@ whenever it is added or touched.
 | `solana-ed25519-program` (SDK, dev) | 3.0.0 | `3.0` |
 | `solana-instructions-sysvar` (SDK) | 5.0.0 | `5.0` |
 | `market-maker-rs` (maker) | 0.6.0 | `0.6` |
-| `rust_decimal` (maker, SDK) | 1.43.0 | `1.43` |
+| `rust_decimal` (maker) | 1.43.0 | `1.43` |
+| `thiserror` (SDK) | 2.0.21 | `2.0` |
+| `solana-instruction` (SDK) | 4.0.0 | `3.5`: the SDK's `Instruction` must be LiteSVM's, so it stays on the LiteSVM generation (exception below) |
 
 **LiteSVM pin (M2).** LiteSVM 0.18.1, the latest, requires `solana-address ~2.7` and the
 Solana client crates of the 4.3 generation; newer releases of those crates (agave 4.4,
