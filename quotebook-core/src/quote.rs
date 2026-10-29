@@ -7,14 +7,20 @@
 
 use solana_address::Address;
 
-use crate::{BaseLots, Nonce, QuoteLotsPerBaseLot, QuotebookError, SeriesId, Side, UnixTimestamp};
+use crate::{
+    BaseLots, Nonce, QuoteLotsPerBaseLot, QuotebookError, Seconds, SeriesId, Side, UnixTimestamp,
+};
 
 /// Domain-separation tag, the first 16 bytes of every signed quote.
 pub const QUOTE_DOMAIN: [u8; 16] = *b"quotebook-v1\0\0\0\0";
 
-/// How far, in seconds, a quote's `issued_at` may lie ahead of the on-chain clock. The Clock
-/// sysvar's `unix_timestamp` is a stake-weighted estimate that drifts from wall time.
-pub const MAX_CLOCK_SKEW: i64 = 10;
+/// How far a quote's `issued_at` may lie ahead of the on-chain clock. The Clock sysvar's
+/// `unix_timestamp` is a stake-weighted estimate that drifts from wall time.
+///
+/// It lengthens a quote's on-chain life to at most `max_quote_ttl + MAX_CLOCK_SKEW`, which is
+/// why the maker's nonce bound ([`min_issued_at_beyond_window`](crate::min_issued_at_beyond_window))
+/// includes it.
+pub const MAX_CLOCK_SKEW: Seconds = Seconds::new(10);
 
 /// Pod layouts. `derive(Pod)` on a multi-field struct checks for padding with a
 /// `const _: () = assert!(..)` item: a compile-time check that cannot panic at run time, but
@@ -127,6 +133,46 @@ impl Quote {
         self.is_open() || self.0.taker == *taker
     }
 
+    /// Checks the quote's time window at on-chain time `now` (docs/PLAN.md, invariant 4):
+    /// `now < expires_at`, `expires_at - issued_at <= max_quote_ttl` and
+    /// `issued_at <= now + MAX_CLOCK_SKEW`.
+    ///
+    /// So a quote can be filled only while `issued_at - MAX_CLOCK_SKEW <= now < expires_at`, a
+    /// span of at most `max_quote_ttl + MAX_CLOCK_SKEW`.
+    ///
+    /// # Errors
+    ///
+    /// - `QuoteExpired` if `now >= expires_at`.
+    /// - `QuoteTtlTooLong` if the lifetime exceeds `max_quote_ttl` (including a lifetime too
+    ///   long for `i64`), or `issued_at` is more than `MAX_CLOCK_SKEW` ahead of `now`.
+    #[must_use = "the result carries a possible error"]
+    pub fn check_time(
+        &self,
+        now: UnixTimestamp,
+        max_quote_ttl: Seconds,
+    ) -> Result<(), QuotebookError> {
+        let t = &self.0;
+        if now >= t.expires_at {
+            return Err(QuotebookError::QuoteExpired);
+        }
+        // `expires_at > now`, so a failed subtraction is a lifetime above `i64::MAX`.
+        let lifetime = t
+            .expires_at
+            .get()
+            .checked_sub(t.issued_at.get())
+            .ok_or(QuotebookError::QuoteTtlTooLong)?;
+        if lifetime > max_quote_ttl.get() {
+            return Err(QuotebookError::QuoteTtlTooLong);
+        }
+        // `now + MAX_CLOCK_SKEW` above `i64::MAX` bounds no `issued_at`.
+        if let Some(latest_issue) = now.get().checked_add(MAX_CLOCK_SKEW.get()) {
+            if t.issued_at.get() > latest_issue {
+                return Err(QuotebookError::QuoteTtlTooLong);
+            }
+        }
+        Ok(())
+    }
+
     /// The canonical bytes a maker signs.
     #[must_use]
     pub fn encode(&self) -> [u8; Self::LEN] {
@@ -198,9 +244,10 @@ impl Quote {
     clippy::disallowed_macros
 )]
 mod tests {
-    use super::{Quote, QuoteTerms, QuoteWire, QUOTE_DOMAIN};
+    use super::{Quote, QuoteTerms, QuoteWire, MAX_CLOCK_SKEW, QUOTE_DOMAIN};
     use crate::{
-        BaseLots, Nonce, QuoteLotsPerBaseLot, QuotebookError, SeriesId, Side, UnixTimestamp,
+        BaseLots, Nonce, QuoteLotsPerBaseLot, QuotebookError, Seconds, SeriesId, Side,
+        UnixTimestamp,
     };
     use core::mem::offset_of;
     use solana_address::Address;
@@ -300,6 +347,47 @@ mod tests {
         let mut b = sample().encode();
         b[176..184].fill(0);
         assert_eq!(Quote::decode(&b), Err(QuotebookError::MalformedQuote));
+    }
+
+    fn timed(issued_at: i64, expires_at: i64) -> Quote {
+        let mut t = *sample().terms();
+        t.issued_at = UnixTimestamp::new(issued_at);
+        t.expires_at = UnixTimestamp::new(expires_at);
+        Quote::new(t).unwrap()
+    }
+
+    #[test]
+    fn test_quote_check_time_window_edges() {
+        let ttl = Seconds::new(60);
+        let q = timed(100, 160);
+        let at = |now| q.check_time(UnixTimestamp::new(now), ttl);
+        // Fillable exactly on [issued_at - MAX_CLOCK_SKEW, expires_at).
+        assert_eq!(at(89), Err(QuotebookError::QuoteTtlTooLong));
+        assert_eq!(at(90), Ok(()));
+        assert_eq!(at(159), Ok(()));
+        assert_eq!(at(160), Err(QuotebookError::QuoteExpired));
+        assert_eq!(MAX_CLOCK_SKEW, Seconds::new(10));
+    }
+
+    #[test]
+    fn test_quote_check_time_lifetime_bound() {
+        let now = UnixTimestamp::new(100);
+        assert_eq!(timed(100, 160).check_time(now, Seconds::new(60)), Ok(()));
+        assert_eq!(
+            timed(100, 161).check_time(now, Seconds::new(60)),
+            Err(QuotebookError::QuoteTtlTooLong)
+        );
+        assert_eq!(
+            timed(i64::MIN, i64::MAX).check_time(now, Seconds::new(i64::MAX)),
+            Err(QuotebookError::QuoteTtlTooLong)
+        );
+    }
+
+    #[test]
+    fn test_quote_check_time_near_i64_max_does_not_overflow() {
+        let q = timed(i64::MAX - 5, i64::MAX);
+        let now = UnixTimestamp::new(i64::MAX - 1);
+        assert_eq!(q.check_time(now, Seconds::new(60)), Ok(()));
     }
 
     #[test]

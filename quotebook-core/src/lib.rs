@@ -20,9 +20,10 @@ mod quantity;
 mod quote;
 
 pub use error::QuotebookError;
-pub use nonce::{NonceWindow, WINDOW_BITS};
+pub use nonce::{min_issued_at_beyond_window, NonceWindow, WINDOW_BITS};
 pub use quantity::{
-    BaseAtoms, BaseLots, Nonce, QuoteAtoms, QuoteLotsPerBaseLot, SeriesId, Side, UnixTimestamp,
+    BaseAtoms, BaseLots, Nonce, QuoteAtoms, QuoteLotsPerBaseLot, Seconds, SeriesId, Side,
+    UnixTimestamp,
 };
 pub use quote::{Quote, QuoteTerms, MAX_CLOCK_SKEW, QUOTE_DOMAIN};
 pub use solana_address::Address;

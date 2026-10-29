@@ -7,11 +7,30 @@
 //! at the top. `cancel_all` is the same slide, driven by the maker, and also records the
 //! watermark in `last_cancel_all` so a rejection can say which of the two moved the base.
 //!
-//! The safety argument (docs/PLAN.md, section 4.2): a quote lives at most `max_quote_ttl`
-//! seconds, so a maker that issues fewer than 16,384 quotes per TTL never loses a live quote to
-//! a slide.
+//! # When a slide can evict a live quote
+//!
+//! The ring itself is exact; the safety of sliding rests on a rule the maker follows when it
+//! issues nonces (docs/PLAN.md, section 4.2):
+//!
+//! > for every nonce `M`, `issued_at(M) >= expires_at(N) + MAX_CLOCK_SKEW` for every
+//! > `N <= M - 16,384`.
+//!
+//! [`min_issued_at_beyond_window`] computes that floor. Proof sketch: by
+//! [`Quote::check_time`](crate::Quote::check_time), quote `Q` can be filled only at on-chain
+//! times `t` with `issued_at(Q) - MAX_CLOCK_SKEW <= t < expires_at(Q)`. The window drops
+//! nonce `N` only when a nonce `M >= N + 16,384` is consumed (a `settle` of quote `M`, or the
+//! maker's own `cancel_nonce` or `cancel_all`). A `settle` of `M` happens at some `t >=
+//! issued_at(M) - MAX_CLOCK_SKEW >= expires_at(N)`, where quote `N` is already expired. So no
+//! fill evicts a quote that is still fillable. With `issued_at` non-decreasing in the nonce and
+//! every lifetime at most `max_quote_ttl`, the rule holds if `issued_at(N + 16,384) -
+//! issued_at(N) >= max_quote_ttl + MAX_CLOCK_SKEW` for every `N`: at most 16,384 nonces in any
+//! half-open `issued_at` interval of that length, about 234 quotes per second at 60 s + 10 s.
+//!
+//! A horizon of `max_quote_ttl` alone is not enough: a quote accepted at `now = 0` may carry
+//! `issued_at = 10, expires_at = 70`, and a nonce 16,384 issued 61 s later is fillable at
+//! `t = 61`, while that quote still is.
 
-use crate::{Nonce, QuotebookError};
+use crate::{Nonce, QuotebookError, UnixTimestamp, MAX_CLOCK_SKEW};
 
 /// Number of nonces the ring tracks above `window_base`.
 pub const WINDOW_BITS: u64 = 16_384;
@@ -259,6 +278,25 @@ fn low_bits(k: u64) -> Result<u64, QuotebookError> {
     let k = u32::try_from(k).map_err(|_| QuotebookError::Overflow)?;
     1u64.checked_shl(k)
         .and_then(|b| b.checked_sub(1))
+        .ok_or(QuotebookError::Overflow)
+}
+
+/// The earliest `issued_at` a maker may stamp on any nonce `M >= N + WINDOW_BITS`, where
+/// `latest_expiry` is the latest `expires_at` among its nonces up to `N`:
+/// `latest_expiry + MAX_CLOCK_SKEW`. Issuing at or after it means a fill of `M` can only land
+/// once every quote it slides out of the window has expired (see the module documentation).
+///
+/// # Errors
+///
+/// `Overflow` if the sum does not fit `i64`.
+#[must_use = "the result carries a possible error"]
+pub fn min_issued_at_beyond_window(
+    latest_expiry: UnixTimestamp,
+) -> Result<UnixTimestamp, QuotebookError> {
+    latest_expiry
+        .get()
+        .checked_add(MAX_CLOCK_SKEW.get())
+        .map(UnixTimestamp::new)
         .ok_or(QuotebookError::Overflow)
 }
 
