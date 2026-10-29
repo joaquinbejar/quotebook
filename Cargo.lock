@@ -2256,6 +2256,7 @@ dependencies = [
  "futures-util",
  "litesvm",
  "market-maker-rs",
+ "proptest",
  "quotebook-core",
  "quotebook-sdk",
  "rust_decimal",

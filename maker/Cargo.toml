@@ -28,6 +28,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 litesvm = { workspace = true, features = ["precompiles"] }
+proptest = { workspace = true }
 quotebook-sdk = { workspace = true }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
