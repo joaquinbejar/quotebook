@@ -161,14 +161,24 @@ fn measure() -> Vec<Row> {
     // fill whose nonce slides the window by 16,383 nonces from an unaligned base (the largest
     // ring clear), on whichever side costs more; for Token-2022 every mint carries the allowed
     // extensions and every token account the account extensions settle walks.
-    let heavy_mint = [
-        tlv(3, &[0; 32]),
-        tlv(10, &[0; 52]),
-        tlv(18, &[0; 64]),
-        tlv(19, &[0; 200]),
-        tlv(25, &[0; 56]),
-    ]
-    .concat();
+    // Every allowlisted mint extension, taken from the program's own list so a new entry is
+    // measured too; values at realistic sizes (unknown types get 64 bytes).
+    let heavy_mint: Vec<u8> = quotebook_program::mint::ALLOWED_EXTENSIONS
+        .iter()
+        .flat_map(|&kind| {
+            let value = match kind {
+                6 => vec![1], // DefaultAccountState = Initialized
+                3 => vec![0; 32],
+                10 => vec![0; 52],
+                19 => vec![0; 200],
+                21 => vec![0; 80],
+                23 => vec![0; 72],
+                25 => vec![0; 56],
+                _ => vec![0; 64],
+            };
+            tlv(kind, &value)
+        })
+        .collect();
     let heavy_account = [tlv(7, &[]), tlv(11, &[0]), tlv(8, &[0])].concat();
     let token_2022 = MarketSpec {
         base_2022: true,
@@ -236,7 +246,7 @@ fn measure() -> Vec<Row> {
     });
     rows.push(Row {
         name: "settle",
-        note: "Token-2022, worst case (as SPL, plus five mint and three account extensions)",
+        note: "Token-2022, worst case (as SPL, plus every allowlisted mint extension and three account extensions)",
         cu: worst(&token_2022),
     });
 
