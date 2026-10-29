@@ -51,10 +51,88 @@ pub fn redact_urls(message: &str) -> String {
     }
 }
 
+/// Minimum length of a URL path segment or query value treated as a secret token.
+const MIN_TOKEN_LEN: usize = 8;
+
+/// Scrubs one RPC URL from messages: the URL itself (as [`redact_urls`] does for every URL) and
+/// every path segment, query value and userinfo part of 8 or more characters
+/// as a bare token, because providers echo the key alone (`/?api-key=KEY`, QuickNode's
+/// `/TOKEN/`).
+#[derive(Clone, Default)]
+pub struct Redactor {
+    tokens: Vec<String>,
+}
+
+impl std::fmt::Debug for Redactor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Redactor")
+            .field("tokens", &self.tokens.len())
+            .finish()
+    }
+}
+
+impl Redactor {
+    /// The tokens of `url`.
+    #[must_use]
+    pub fn new(url: &str) -> Self {
+        let rest = url.split_once("://").map_or(url, |(_, r)| r);
+        let (authority, tail) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
+        let mut parts: Vec<&str> = Vec::new();
+        if let Some((userinfo, _)) = authority.rsplit_once('@') {
+            parts.extend(userinfo.split(':'));
+        }
+        let (path, query) = tail.split_once('?').unwrap_or((tail, ""));
+        let query = query.split('#').next().unwrap_or("");
+        parts.extend(path.split('/'));
+        parts.extend(
+            query
+                .split('&')
+                .map(|kv| kv.split_once('=').map_or(kv, |(_, v)| v)),
+        );
+        let mut tokens: Vec<String> = parts
+            .into_iter()
+            .filter(|t| t.len() >= MIN_TOKEN_LEN)
+            .map(str::to_owned)
+            .collect();
+        // Longest first, so a token that contains another is replaced whole.
+        tokens.sort_by_key(|t| std::cmp::Reverse(t.len()));
+        tokens.dedup();
+        Self { tokens }
+    }
+
+    /// `message` with every URL and every token of this redactor's URL replaced.
+    #[must_use]
+    pub fn redact(&self, message: &str) -> String {
+        let mut out = redact_urls(message);
+        for token in &self.tokens {
+            out = out.replace(token.as_str(), "<redacted>");
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic, clippy::disallowed_macros)]
 mod tests {
-    use super::redact_urls;
+    use super::{redact_urls, Redactor};
+
+    #[test]
+    fn test_redactor_scrubs_bare_tokens() {
+        let r = Redactor::new("https://user:hunter2-password@rpc.example.com/QUICKNODE-TOKEN-1/?api-key=SECRET-KEY-42&cluster=devnet");
+        let m = r.redact(
+            "failed: https://rpc.example.com/QUICKNODE-TOKEN-1/?api-key=SECRET-KEY-42; key SECRET-KEY-42, path QUICKNODE-TOKEN-1, pass hunter2-password",
+        );
+        for secret in [
+            "SECRET-KEY-42",
+            "QUICKNODE-TOKEN-1",
+            "hunter2-password",
+            "rpc.example.com",
+        ] {
+            assert!(!m.contains(secret), "{m}");
+        }
+        // Short values are not treated as secrets.
+        assert!(r.redact("devnet").contains("devnet"));
+    }
 
     #[test]
     fn test_redact_urls() {

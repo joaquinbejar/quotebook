@@ -316,3 +316,39 @@ fn test_cli_rpc_errors_never_show_the_url() {
         .to_string();
     assert!(!err.contains("SECRET"), "{err}");
 }
+
+/// A synthetic `sendTransaction` preflight failure whose message and program logs carry the
+/// full URL, the bare API key and the bare path token: `Cluster::describe` renders the whole
+/// error, logs included, then redacts, so none of the three survives.
+#[test]
+fn test_cli_preflight_logs_are_redacted() {
+    use quotebook_cli::rpc::Cluster;
+    use solana_rpc_client::api::client_error::{Error as ClientError, ErrorKind};
+    use solana_rpc_client::api::request::{RpcError, RpcResponseErrorData};
+
+    let key = "SECRET-API-KEY-123";
+    let token = "QUICKNODE-PATH-TOKEN";
+    let url = format!("https://rpc.example.com/{token}/?api-key={key}");
+    let result = serde_json::from_value(serde_json::json!({
+        "err": null,
+        "logs": [
+            format!("Program log: fetched {url}"),
+            format!("Program log: key {key}"),
+            format!("Program log: token {token}"),
+        ],
+    }))
+    .unwrap();
+    let error = ClientError::from(ErrorKind::RpcError(RpcError::RpcResponseError {
+        code: -32002,
+        message: format!("Transaction simulation failed via {url} ({key}, {token})"),
+        data: RpcResponseErrorData::SendTransactionPreflightFailure(result),
+    }));
+    // The raw error does carry all three, logs included.
+    let raw = error.to_string();
+    assert!(raw.contains(&url) && raw.contains("log messages"), "{raw}");
+    let shown = Cluster::new(&url).describe(&error);
+    for secret in [url.as_str(), key, token, "rpc.example.com"] {
+        assert!(!shown.contains(secret), "{shown}");
+    }
+    assert!(shown.contains("log messages"), "{shown}");
+}

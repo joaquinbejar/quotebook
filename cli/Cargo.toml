@@ -48,6 +48,7 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 litesvm = { workspace = true, features = ["precompiles"] }
+serde_json = { workspace = true }
 solana-clock = { workspace = true }
 
 [lints]

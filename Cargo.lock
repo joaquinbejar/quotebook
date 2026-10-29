@@ -2859,6 +2859,7 @@ dependencies = [
  "quotebook-maker",
  "quotebook-sdk",
  "rust_decimal",
+ "serde_json",
  "solana-account",
  "solana-address 2.7.0",
  "solana-clock 3.2.1",

@@ -43,7 +43,7 @@ pub async fn ask(url: &str, request: &QuoteRequest) -> Result<Answer, CliError> 
         .await
         .map_err(|e| match e {
             client::ClientError::Transport(m) => CliError::Quote(client::ClientError::Transport(
-                crate::error::redact_urls(&m),
+                crate::error::Redactor::new(url).redact(&m),
             )),
             other => CliError::Quote(other),
         })

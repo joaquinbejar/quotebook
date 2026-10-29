@@ -12,7 +12,7 @@ use solana_signature::Signature;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
 
-use crate::error::redact_urls;
+use crate::error::Redactor;
 use crate::CliError;
 
 /// What the tools need from a cluster.
@@ -45,21 +45,29 @@ pub trait Rpc {
 
 /// A real cluster, at `confirmed` commitment. The URL (which may embed an API key) is never
 /// shown: not in `Debug`, not in errors.
-pub struct Cluster(RpcClient);
+pub struct Cluster {
+    client: RpcClient,
+    redactor: Redactor,
+}
 
-/// An RPC error as text, with every URL redacted.
-fn rpc_error(e: impl std::fmt::Display) -> CliError {
-    CliError::Rpc(redact_urls(&e.to_string()))
+impl Cluster {
+    /// An RPC error as text: the client's whole message, including the program logs it
+    /// appends for a failed preflight, and only then redacted, so neither the message nor the
+    /// logs can carry the URL, the bare key or a bare path token.
+    #[must_use]
+    pub fn describe(&self, e: &solana_rpc_client::api::client_error::Error) -> String {
+        self.redactor.redact(&e.to_string())
+    }
 }
 
 impl Cluster {
     /// Connects to `url` (for example `https://api.devnet.solana.com`).
     #[must_use]
     pub fn new(url: &str) -> Self {
-        Self(RpcClient::new_with_commitment(
-            url.to_owned(),
-            CommitmentConfig::confirmed(),
-        ))
+        Self {
+            client: RpcClient::new_with_commitment(url.to_owned(), CommitmentConfig::confirmed()),
+            redactor: Redactor::new(url),
+        }
     }
 }
 
@@ -71,24 +79,28 @@ impl std::fmt::Debug for Cluster {
 
 impl Rpc for Cluster {
     fn account(&mut self, address: &Address) -> Result<Option<Account>, CliError> {
-        self.0
+        self.client
             .get_account_with_commitment(address, CommitmentConfig::confirmed())
             .map(|r| r.value)
-            .map_err(rpc_error)
+            .map_err(|e| CliError::Rpc(self.describe(&e)))
     }
 
     fn latest_blockhash(&mut self) -> Result<Hash, CliError> {
-        self.0.get_latest_blockhash().map_err(rpc_error)
+        self.client
+            .get_latest_blockhash()
+            .map_err(|e| CliError::Rpc(self.describe(&e)))
     }
 
     fn send(&mut self, transaction: &Transaction) -> Result<Signature, CliError> {
-        self.0
+        self.client
             .send_and_confirm_transaction(transaction)
-            .map_err(rpc_error)
+            .map_err(|e| CliError::Rpc(self.describe(&e)))
     }
 
     fn genesis_hash(&mut self) -> Result<Hash, CliError> {
-        self.0.get_genesis_hash().map_err(rpc_error)
+        self.client
+            .get_genesis_hash()
+            .map_err(|e| CliError::Rpc(self.describe(&e)))
     }
 }
 
@@ -136,6 +148,7 @@ pub fn send(
     }
     let blockhash = rpc.latest_blockhash()?;
     let mut tx = Transaction::new_with_payer(instructions, Some(&payer.pubkey()));
-    tx.try_sign(&all, blockhash).map_err(rpc_error)?;
+    tx.try_sign(&all, blockhash)
+        .map_err(|e| CliError::Rpc(e.to_string()))?;
     rpc.send(&tx)
 }
