@@ -13,10 +13,21 @@ SBF_ARCH ?= v3
 build:
 	cargo build --workspace
 
-# Build the program (and with it the no_std core) for SBF into target/deploy
+# Build the program (and with it the no_std core) for SBF into target/deploy. Fails if any
+# stack frame exceeds 4 KiB: cargo build-sbf reports that only as an "Error: Function ...
+# overflows the maximum allowed frame space" line and still exits 0, and the overflow
+# silently corrupts locals (rules/global_rules.md). Older toolchains say "Stack offset ...
+# exceeded max offset". Cached builds print the line again, so the check holds on rebuilds.
+SBF_FRAME_OVERFLOW := maximum allowed frame space|exceeded max offset
+
 .PHONY: program
 program:
-	cargo build-sbf --manifest-path program/Cargo.toml --arch $(SBF_ARCH)
+	@out=$$(cargo build-sbf --manifest-path program/Cargo.toml --arch $(SBF_ARCH) 2>&1); \
+	status=$$?; printf '%s\n' "$$out"; \
+	if [ $$status -ne 0 ]; then exit $$status; fi; \
+	if printf '%s\n' "$$out" | grep -Eq '$(SBF_FRAME_OVERFLOW)'; then \
+		echo "program: an SBF stack frame exceeds 4 KiB (see above)"; exit 1; \
+	fi
 
 # Measure every instruction's CU in LiteSVM and regenerate docs/benchmarks.md
 .PHONY: bench
