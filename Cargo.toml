@@ -1,5 +1,5 @@
 [workspace]
-members = ["quotebook-core", "program", "lint-control"]
+members = ["quotebook-core", "program", "sdk", "lint-control"]
 resolver = "2"
 
 [workspace.package]
@@ -14,6 +14,7 @@ repository = "https://github.com/joaquinbejar/quotebook"
 bytemuck = { version = "1.25", default-features = false, features = ["derive", "must_cast", "min_const_generics"] }
 proptest = "1.12"
 quotebook-core = { path = "quotebook-core", version = "0.1" }
+thiserror = "2.0"
 # Pinocchio 0.11 generation: decided exception to the latest-stable rule (docs/PLAN.md).
 pinocchio = { version = "0.11", default-features = false, features = ["cpi"] }
 pinocchio-system = "0.6"

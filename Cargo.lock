@@ -1997,6 +1997,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "quotebook-sdk"
+version = "0.1.0"
+dependencies = [
+ "litesvm",
+ "quotebook-core",
+ "solana-account",
+ "solana-address 2.7.0",
+ "solana-clock 3.2.1",
+ "solana-instruction 3.5.1",
+ "solana-keypair",
+ "solana-sdk-ids",
+ "solana-signer",
+ "solana-transaction",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "r-efi"
 version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
