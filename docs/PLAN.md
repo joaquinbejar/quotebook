@@ -135,8 +135,28 @@ pub enum QuotebookError {
     SeriesPaused,
     NotAuthority,
     MintExtensionUnsupported,
+    // appended in M1
+    MalformedQuote,                // side not 0 or 1, non-zero padding, zero price or size
+    WatermarkNotIncreasing,        // cancel_all did not raise window_base
 }
 ```
+
+M1 implementation notes (`quotebook-core`, decided while building it):
+
+- Codes are dense from 100 (`InvalidInstruction`) to 129 (`WatermarkNotIncreasing`); new
+  variants are only appended. `QuotebookError::from_code` lets clients decode them.
+- `Quote` is a validated type, not the wire struct: `Quote::new(QuoteTerms)` rejects a zero
+  price or size, and `QuoteTerms` (public fields, `Side` as the enum) is the input form. The
+  208-byte layout is a private `QuoteWire` of byte arrays only (alignment 1, no padding, same
+  layout on host and SBF), converted with `bytemuck::must_cast` (size checked at compile
+  time). The domain tag is a constant, not a field: `decode` checks it (`WrongDomain`).
+  `decode` accepts exactly the outputs of `encode` (property tested), so the encoding is
+  canonical.
+- `MAX_CLOCK_SKEW` (10 s) and `QUOTE_DOMAIN` live in `quotebook-core`.
+- `derive(Pod)` on a multi-field struct emits a compile-time `const _: () = assert!(..)`,
+  which `clippy::disallowed_macros` reports. Pod layouts therefore sit in small `layout`
+  modules with a module-level `#[allow(clippy::disallowed_macros)]` and no logic; the same
+  pattern applies to the M2 accounts.
 
 ### otc-rfq: what can be reused
 
@@ -168,7 +188,7 @@ and are `bytemuck::Pod`, loaded zero-copy.
 | --- | --- | --- | --- | --- |
 | `Config` | `["config"]` | quotebook | 8 + 32 + 8 + 16 = 64 | `init_config`, `set_config` (admin; never `deployment_id`) |
 | `Series` | `["series", base_mint, quote_mint, series_index_le]` | quotebook | 144 | `create_series`, `set_series_paused` |
-| `MakerState` | `["maker", maker]` | quotebook | 8 + 32 + 8×3 + 8 + 2,048 = 2,120 | `init_maker`, `cancel_all`, `cancel_nonce`, `settle` |
+| `MakerState` | `["maker", maker]` | quotebook | 8 + 32 + 8 + 8 + 2,064 = 2,120 | `init_maker`, `cancel_all`, `cancel_nonce`, `settle` |
 | Delegate authority | `["delegate", maker]` | none (PDA, no data) | 0 | never; signs that maker's token transfers |
 
 Field sketches:
@@ -183,11 +203,12 @@ struct Series {
 }
 struct MakerState {
     hdr: Hdr, maker: Address,
-    window_base: u64,           // lowest fillable nonce; also the cancel-all watermark
     fills: u64,                 // counter, for clients
-    last_cancel_all: u64,       // tells NonceCancelled from NonceOutOfWindow
     delegate_bump: u8, _pad: [u8; 7],
-    used: [u64; 256],           // 16,384-bit ring: bit (n mod 16,384) for nonces in the window
+    nonces: NonceWindow,        // quotebook-core, 2,064 bytes:
+    //  window_base: u64,       // lowest fillable nonce; also the cancel-all watermark
+    //  last_cancel_all: u64,   // tells NonceCancelled from NonceOutOfWindow
+    //  used: [u64; 256],       // 16,384-bit ring: bit (n mod 16,384) for nonces in the window
 }
 ```
 
@@ -414,11 +435,11 @@ whenever it is added or touched.
 | Crate | Latest stable | Requirement |
 | --- | --- | --- |
 | `pinocchio` | 0.12.0 (0.11.2 used) | `0.11`, decided exception below |
-| `bytemuck` | 1.25.2 | `1.25` |
+| `bytemuck` | 1.25.2 | `1.25`, features `derive`, `must_cast`, `min_const_generics` |
 | `proptest` (dev) | 1.12.0 | `1.12` |
 | `litesvm` (dev) | 0.18.1 | `0.18` |
 | `mollusk-svm` (dev, optional) | 0.16.4 | `0.16` |
-| `solana-address` | 2.9.0 | `2.9` |
+| `solana-address` | 2.9.0 | `2.9`, `default-features = false`, feature `bytemuck` |
 | `pinocchio-system` | 0.7.0 (0.6.1 used) | `0.6`, decided exception below |
 | `pinocchio-token` | 0.7.0 | `0.7`, see conflict below |
 | `litesvm-token` (dev) | 0.18.1 | `0.18` |
