@@ -37,9 +37,10 @@ transaction per quote and no crank. Withdrawing every outstanding quote is one `
 ### Status
 
 v1 is complete through milestone 6 of [docs/PLAN.md](docs/PLAN.md), and the milestone 7
-tooling (admin CLI, maker binary, taker CLI over RPC) is merged. The devnet deployment is
-prepared in [docs/devnet.md](docs/devnet.md) but **not deployed yet**: there is no public
-program id. The crates are not published on crates.io; use them from this repository.
+tooling (admin CLI, maker binary, taker CLI over RPC) is merged. The program is **deployed on
+devnet** as `3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo`, with one test series and a settled
+demo fill; addresses and signatures are in [docs/devnet.md](docs/devnet.md). It is not on
+mainnet. The crates are not published on crates.io; use them from this repository.
 
 ### Features
 
@@ -318,7 +319,7 @@ Measured in LiteSVM by `make bench`; full table and method in
 
 ### Security Notes
 
-- The program is **unaudited** and not deployed; do not use it with real funds.
+- The program is **unaudited** and deployed only on devnet; do not use it with real funds.
 - `init_config` can only be signed by the program's upgrade authority, so the deployment
   cannot be front-run. Deploy with the upgradeable loader, never loader-v4.
 - Quotes are bound to program id, series, deployment id (genesis hash prefix) and

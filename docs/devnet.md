@@ -1,12 +1,15 @@
 # quotebook on devnet: runbook
 
-Milestone 7 of [PLAN.md](PLAN.md). **Not deployed yet.** This runbook is the plan for the
-deployment, with the `quotebook-cli` tools (`quotebook-admin`, `quotebook-maker`,
+Milestone 7 of [PLAN.md](PLAN.md). **Deployed on 2026-10-30**; the addresses and signatures
+are in [Deployment record](#deployment-record). This runbook is how it was done, with the
+`quotebook-cli` tools (`quotebook-admin`, `quotebook-maker`,
 `quotebook-taker`; `cargo build --release -p quotebook-cli`). Keypair options take file paths;
 the tools print public keys and transaction signatures only. Keep keypair files out of the
 repository (`.gitignore` ignores `keys/` and `*keypair*.json`).
 
-The examples use `QB="--url https://api.devnet.solana.com --program-id <PROGRAM_ID>"`.
+The examples use `QB=(--url https://api.devnet.solana.com --program-id <PROGRAM_ID>)`, an
+array, so it expands to separate arguments in both zsh and bash (a plain string does not split
+in zsh). In bash, write `"${QB[@]}"` where the examples write `$QB`.
 
 ## What is needed from Joaquin
 
@@ -118,3 +121,94 @@ initialized (`NotAuthority`).
   the program id, so outstanding quotes stay valid across an upgrade.
 - Record the program id, `ProgramData` address, deployed commit, `.so` hash, config and series
   addresses in this file.
+
+## Deployment record
+
+Deployed on 2026-10-30 from the Mac Studio with Agave `solana-cli` 4.4.0 and
+`spl-token-cli` 5.7.1. Every signature can be looked up on an explorer with `?cluster=devnet`.
+
+### Program
+
+| Item | Value |
+| --- | --- |
+| Program id | `3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo` |
+| Loader | `BPFLoaderUpgradeab1e11111111111111111111111` |
+| `ProgramData` | `FvGuwVkTTgTuz1aBfxkxgTfnrrazktc4oXDmyohymqfN` (35,032 bytes, slot 516765399) |
+| Upgrade authority, admin and payer | `77ieYLKspRnGzAt1AK6ZVsttnTY6T7EY2k7CpTZeCPPV` |
+| Deployed commit | `898c173d1916404f8579514a4b034aeff129440b` |
+| `.so` SHA-256 | `d7c2f1de7114751cb05849a981924956bb0e632ae5f849cc9fd62caa7fc721e7` |
+| `Config` | `D7Y4JfDJNMuwJwMEZP848s8x8MhoTRyZLArEmnum3n71` |
+| Deployment id | `ce59db5080fc2c6d3bcf7ca90712d3c2`: the first 16 bytes of devnet's genesis hash `EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG` |
+
+The program-id, maker and taker keypairs were generated on the Studio with `solana-keygen` and
+are kept outside the repository.
+
+### Series 0
+
+Both mints are test mints created for the demo (SPL Token, 6 decimals, mint authority
+`77ie…CPPV`). Circle's devnet USDC was not used: its faucet is the only way to get it, and test
+mints let the demo fund every participant from the payer.
+
+| Item | Value |
+| --- | --- |
+| Series | `6XjcDfJ2bUyuoCTZYrwLcJihMAm5eoPuJxN9GNe9pGh7` |
+| Base mint (QBB) | `EGGsXxG4WEeVEMC3z3jveuF5q8VynofPkBH9wNaxeaSe` |
+| Quote mint (QBQ) | `3FpYVrdrw9VruShcj8Ma3E9PAPtGwZH2FKMcMABaARs6` |
+| `base_lot_size` | 1,000,000 atoms (1 QBB) |
+| `quote_lot_size` | 10,000 atoms (0.01 QBQ): one tick is 0.01 QBQ per QBB |
+| `max_quote_ttl` | 60 s |
+| `min_size` | 1 lot |
+
+### Participants
+
+| Role | Wallet | Base account | Quote account |
+| --- | --- | --- | --- |
+| Maker | `5btdGC2DapeXNXqY3ocNJQkoYGyp8LdJprtKspWcmWW5` | `HNHGenxTcd9EoqXcWm7yKBUxTzLuBfE431dcTVTiaaFo` | `EmYy5f5XxSmcZcQ6XtnJmNjZMnwVGGTLx3ysYSXRhyGt` |
+| Taker | `3ZBj1qBpdoH5NrMTwAHq2fY6Hbo5M1GURxaP9y8bsqLs` | `FtJUjSZHxmDxG2EwVZXzBs8kqRxrJaf9g7CXLLpMpf43` | `9TetQZmmrhpBUVfF6uxuwrGLrUfKFvTAmu6UFEhTmppS` |
+
+Maker accounts: `MakerState` `5jjt2ZysNyLnmeUxzV4o6mTNrqaRnrCdZoHdJBxEWWgx`, delegate PDA
+`2LWv7A5zvmmzC4PM6Ah3wvAbq2nbjyKZ1nRCNz2YFyxf`. Each wallet got 2 SOL from the payer. The
+maker was minted 1,000 QBB and 100,000 QBQ, and the taker 100 QBB and 10,000 QBQ.
+
+### Transactions
+
+| Step | Signature |
+| --- | --- |
+| Deploy | `4vDaEFqPi4Rj4XzwE8HwWJToKwWpnpghZb4tGdr14DET9TgzK9X2w256ZitQdm6DZZT3xaGiTsAncsAQTkye71gq` |
+| `init_config` | `2huuko43WVECGZnZk8oe4VyYFKYfom4XXf1Nd83mNPUuXnkshv916nxYtLuF2TKRLDgiSwGwUUVbSd3j5YV6V81Q` |
+| Create QBB | `3D9wCSu3XYoSq5pwVL99WuaT4EdcM49wJmrNeVrni5mHdJ8U3Y56tY7EhtZnxFr21g7UzNqugcknHSHD7yNhJkMd` |
+| Create QBQ | `4dWXvRRRdPTPzxTtN3skfdcLuVRwZEDmnD7jRQDymaLUudMjDWY7VZDzdD8jB7Gp93BoiFJEYvShbuHza3Pz4yFo` |
+| Fund maker (2 SOL) | `4YgyVm515DKrtTxdov94wYozo16yCkyG8ZFjDsLk6uEUhxz7geKGK4ZEDrKpPgkZTDuzNuJDu9BP7g2hibkbwBKP` |
+| Fund taker (2 SOL) | `ufhkNV6oCvsm7MvRt6p45x2kLSdtoC8pHBo9aUM9HkTDZtPKCs8NZ1FVMQGK68tWhRkg5WivBaqGDBUsmWVM6i4` |
+| Maker QBB account | `3MZgZvQ7zhM7kmwEgRVKJdqQXS53agJKmB5iP5dSoC8M8NuQpPunjcUG3rXtJVYZdiFBMjtVCWsPJrQvx3YsKZUU` |
+| Maker QBQ account | `G5HeQXWVySFZsMdhE1fXdKz7yr47mRNyWesn3e9LR2SYLhdBbYpD1JrBBYZVp94GPbCGAhrZ6pGkG74DCneZPpS` |
+| Taker QBB account | `jjM6QBeRgP9jNKdQfxq2ShuCLCRz1VFDWKPLSkRUxutMkgX6ZNEUTrR4RVMy1eTeGvAAdzBGXNLPAhcW8xzj1QJ` |
+| Taker QBQ account | `2BgFgcW8z3XvW2kjHKv8civTPwzSgTmVM1pfKUcnvwtBkjLFDAFUp8NPopqW28pGZkCwT5Xm6PGR2QMoNpKa4V5c` |
+| Mint 1,000 QBB to the maker | `2VB7LPEK3tDYihuHy6g1Fqa72Hc1GcXFNxvfjuoydiFpLnkHsDUFkXs9GQRR7D9mv647NAk1D2CW11HJtFnfR84U` |
+| Mint 100,000 QBQ to the maker | `25SwUVSm6sWudvxnDkHiLSCdRrhwvMd39Nmyu4tVYCrA1r3vf5H2LS4y6J8BEF249mfhuJirbB5bhZfcNaqeeNFP` |
+| Mint 100 QBB to the taker | `3t2LVEaArWmeNnbVc4Bd6rSoQR6nWnhhsy1MesuyYnWCKPiJmxKsLWaNc9UKPcPLQBaMnxKqvBUwSiNuRgwr9U79` |
+| Mint 10,000 QBQ to the taker | `3wACRznNfNE1b6fupNxFcJCPiXHiftHpNgQhtcnAXQShuFVrZgSsTk3R2D2Wu7KdvRS5soNZEauAWrYg9JJosuUC` |
+| `create_series` | `5yXZJ5RwftJGUGyN3R8DP6nKj4jHx2DjmUmAFCYpobf1N8Wrxnoiimas9WZn7F8pyb4kUkYAMviUxfPcqkJzPpvE` |
+| `init_maker` | `2vdFxF2ruPqce29WP3nP6UMm1Z79p2wn1xFW2a3mHhD399hby1JAkrMmYEqaWS7MXT539MRJvVZchw9MLvV3tGM7` |
+| Approve delegate, QBB (500 QBB) | `oUuCw9QN1FUnZ9HXQzXQ3BoHSrQUi7RmA5A6VLSN9jSnKedgcbetg1B8xoFErKihtWf4studBMhNvb8CJ6YvFgX` |
+| Approve delegate, QBQ (50,000 QBQ) | `3mg4sxVfsarewKctmqcA9dShj8ePXdLSmUuf3fyCiMUtR6WzRmgvF1gEhaFEUwZDRYQ2qzeAt9nrQi6GSShpYc3W` |
+| `settle`: taker buys 2 lots at 2,565 ticks | `5Pz59PQU4AGERy149Z4MYFiS2spssSxHq9w7gKUVyoNGrQ1H4HZENT3t4qhcZ56qzCE1tn8S4HmEL3DdY5xAQvM6` |
+| `cancel_all`, `new_min` 2 | `61oRAy6waCXcAhBCMf5o4sqmf1dNMDvJRnsnMdgXDijyFndmEc715TeZ1dhu3bdFVNhSV4rcz5zEdSV6Rrxv33R9` |
+
+### Checks
+
+- `program show` reported the upgradeable loader as owner and `77ie…CPPV` as authority.
+- `quotebook-admin show` printed the admin and the deployment id above, which equals the
+  genesis-hash prefix. A second `init-config` failed with "instruction requires an
+  uninitialized account" (`AccountAlreadyInitialized`).
+- `show-series` printed the parameters in the table above.
+- The maker service (`--mid 25 --ttl 30`) refused a request during its 70 s cold start with
+  `RateLimited`. Once the cold start was over it quoted an ask at 2,565 ticks (25.65 QBQ per
+  QBB) for 2 lots: nonce 0 for `quote` and nonce 1 for `settle`.
+- After `settle`, the maker went from 1,000 to 998 QBB and from 100,000 to 100,051.3 QBQ. The
+  taker went from 100 to 102 QBB and from 10,000 to 9,948.7 QBQ. That is `2 × 1,000,000` base
+  atoms and `2,565 × 2 × 10,000 = 51,300,000` quote atoms. `settle` used 8,595 CU, which
+  matches the 8,593 measured in LiteSVM.
+- `MakerState` after `settle` showed `fills` = 1, nonce 1 used and nonce 0 unused (it was only
+  quoted). The final `cancel_all` raised the watermark to 2, which voided the open nonce 0.
+- The maker service was stopped after the demo.
