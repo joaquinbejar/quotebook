@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-30
+
+### Fixed
+
+- Include the MIT license text in the packages: `quotebook-core`, `quotebook-sdk` and
+  `quotebook-maker` each carry a copy of `LICENSE`. No code changes.
+
 ## [0.1.0] - 2026-10-30
 
 First release. Published on crates.io: `quotebook-core`, `quotebook-sdk` and
@@ -42,5 +49,6 @@ and deployed only on devnet, as `3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo`
   logged (#12).
 - Devnet deployment with a settled demo fill, recorded in `docs/devnet.md` (#14).
 
-[Unreleased]: https://github.com/joaquinbejar/quotebook/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/joaquinbejar/quotebook/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/joaquinbejar/quotebook/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/joaquinbejar/quotebook/releases/tag/v0.1.0

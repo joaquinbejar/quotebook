@@ -3,7 +3,7 @@
 [![Issues](https://img.shields.io/github/issues/joaquinbejar/quotebook.svg)](https://github.com/joaquinbejar/quotebook/issues)
 [![PRs](https://img.shields.io/github/issues-pr/joaquinbejar/quotebook.svg)](https://github.com/joaquinbejar/quotebook/pulls)
 
-## QuoteBook v0.1.0: Firm RFQ Quotes on Solana
+## QuoteBook v0.1.1: Firm RFQ Quotes on Solana
 
 ### Table of Contents
 1. [Introduction](#introduction)
@@ -41,7 +41,7 @@ v1 is complete through milestone 6 of [docs/PLAN.md](https://github.com/joaquinb
 tooling (admin CLI, maker binary, taker CLI over RPC) is merged. The program is **deployed on
 devnet** as `3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo`, with one test series and a settled
 demo fill; addresses and signatures are in [docs/devnet.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/devnet.md). It is not on
-mainnet. The libraries are on crates.io at 0.1.0:
+mainnet. The libraries are on crates.io at 0.1.1:
 [`quotebook-core`](https://crates.io/crates/quotebook-core),
 [`quotebook-sdk`](https://crates.io/crates/quotebook-sdk) and
 [`quotebook-maker`](https://crates.io/crates/quotebook-maker); the program and the CLI tools
