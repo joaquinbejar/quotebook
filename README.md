@@ -36,11 +36,16 @@ transaction per quote and no crank. Withdrawing every outstanding quote is one `
 
 ### Status
 
-v1 is complete through milestone 6 of [docs/PLAN.md](docs/PLAN.md), and the milestone 7
+v1 is complete through milestone 6 of [docs/PLAN.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/PLAN.md), and the milestone 7
 tooling (admin CLI, maker binary, taker CLI over RPC) is merged. The program is **deployed on
 devnet** as `3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo`, with one test series and a settled
-demo fill; addresses and signatures are in [docs/devnet.md](docs/devnet.md). It is not on
-mainnet. The crates are not published on crates.io; use them from this repository.
+demo fill; addresses and signatures are in [docs/devnet.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/devnet.md). It is not on
+mainnet. The libraries are on crates.io at 0.1.0:
+[`quotebook-core`](https://crates.io/crates/quotebook-core),
+[`quotebook-sdk`](https://crates.io/crates/quotebook-sdk) and
+[`quotebook-maker`](https://crates.io/crates/quotebook-maker); the program and the CLI tools
+are built from this repository. Changes are listed in
+[CHANGELOG.md](https://github.com/joaquinbejar/quotebook/blob/main/CHANGELOG.md).
 
 ### Features
 
@@ -69,7 +74,7 @@ mainnet. The crates are not published on crates.io; use them from this repositor
 | `quotebook-program` | `program/` | The on-chain program: Pinocchio 0.11, `no_std`, no allocator, zero-copy `Pod` accounts |
 | `quotebook-sdk` | `sdk/` | Rust client SDK: PDAs, a builder for every instruction, the precompile + `settle` pair, account decoders |
 | `quotebook-maker` | `maker/` | Off-chain maker service (market-maker-rs pricing, price bounds, nonce issuance, signing, WebSocket RFQ) and the taker client (request, verify, rank) |
-| `quotebook-cli` | `cli/` | Tools over RPC: `quotebook-admin`, `quotebook-maker` (the service as a binary), `quotebook-taker`; see [docs/devnet.md](docs/devnet.md) |
+| `quotebook-cli` | `cli/` | Tools over RPC: `quotebook-admin`, `quotebook-maker` (the service as a binary), `quotebook-taker`; see [docs/devnet.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/devnet.md) |
 
 ```text
  taker                               maker service
@@ -248,7 +253,7 @@ quotebook-taker settle $QB --maker ws://<host>:9000 --series <SERIES> --side buy
 
 `quotebook-admin` also has `show`, `show-series`, `cancel-all`, `cancel-nonce`, `pause` and
 `resume`; `quotebook-taker quote` verifies and prints a quote without sending it. The full
-runbook is [docs/devnet.md](docs/devnet.md).
+runbook is [docs/devnet.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/devnet.md).
 
 ### Testing and Benchmarks
 
@@ -264,7 +269,7 @@ The CLIs are tested end to end against the program in LiteSVM through their `Rpc
 ### Compute Units
 
 Measured in LiteSVM by `make bench`; full table and method in
-[docs/benchmarks.md](docs/benchmarks.md).
+[docs/benchmarks.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/benchmarks.md).
 
 | Instruction | CU |
 | --- | ---: |
@@ -329,8 +334,8 @@ Measured in LiteSVM by `make bench`; full table and method in
   on-chain window before signing again (fail closed).
 - Keep keypair files out of the repository (`.gitignore` ignores `keys/` and `*keypair*.json`).
 
-Every change follows [rules/global_rules.md](rules/global_rules.md); design decisions and their
-reasons are in [docs/PLAN.md](docs/PLAN.md).
+Every change follows [rules/global_rules.md](https://github.com/joaquinbejar/quotebook/blob/main/rules/global_rules.md); design decisions and their
+reasons are in [docs/PLAN.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/PLAN.md).
 
 ## Contribution and Contact
 
