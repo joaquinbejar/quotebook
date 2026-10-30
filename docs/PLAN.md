@@ -514,8 +514,10 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
    commit `898c173`. The runbook ran end to end: `init_config`, series 0 on two test mints,
    maker init and approvals, a cold-started maker service, one settled fill (8,595 CU, against
    8,593 in LiteSVM) and a `cancel_all`. Test mints instead of Circle's devnet USDC, because
-   the payer can mint them to every participant. Record in `docs/devnet.md`. Still open: v0.1
-   crate publishing, after the go-ahead.
+   the payer can mint them to every participant. Record in `docs/devnet.md`. Released as v0.1.0
+   on 2026-10-30 (go-ahead relayed by the coordinator): `quotebook-core`, `quotebook-sdk`
+   and `quotebook-maker` on crates.io; `quotebook-program` and `quotebook-cli` stay
+   `publish = false`.
 
 ## Verified facts (checked 2026-10-28)
 
