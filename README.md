@@ -8,20 +8,21 @@
 ### Table of Contents
 1. [Introduction](#introduction)
 2. [Status](#status)
-3. [Features](#features)
-4. [Architecture](#architecture)
-5. [Accounts](#accounts)
-6. [Instructions](#instructions)
-7. [Quote Format](#quote-format)
-8. [Nonces, Cancels and Restarts](#nonces-cancels-and-restarts)
-9. [Token-2022](#token-2022)
-10. [Setup Instructions](#setup-instructions)
-11. [Usage Examples](#usage-examples)
-12. [Testing and Benchmarks](#testing-and-benchmarks)
-13. [Compute Units](#compute-units)
-14. [Error Codes](#error-codes)
-15. [Security Notes](#security-notes)
-16. [Contribution and Contact](#contribution-and-contact)
+3. [On Devnet](#on-devnet)
+4. [Features](#features)
+5. [Architecture](#architecture)
+6. [Accounts](#accounts)
+7. [Instructions](#instructions)
+8. [Quote Format](#quote-format)
+9. [Nonces, Cancels and Restarts](#nonces-cancels-and-restarts)
+10. [Token-2022](#token-2022)
+11. [Setup Instructions](#setup-instructions)
+12. [Usage Examples](#usage-examples)
+13. [Testing and Benchmarks](#testing-and-benchmarks)
+14. [Compute Units](#compute-units)
+15. [Error Codes](#error-codes)
+16. [Security Notes](#security-notes)
+17. [Contribution and Contact](#contribution-and-contact)
 
 ### Introduction
 
@@ -46,6 +47,52 @@ mainnet. The libraries are on crates.io at 0.1.0:
 [`quotebook-maker`](https://crates.io/crates/quotebook-maker); the program and the CLI tools
 are built from this repository. Changes are listed in
 [CHANGELOG.md](https://github.com/joaquinbejar/quotebook/blob/main/CHANGELOG.md).
+
+### On Devnet
+
+The v0.1.0 program runs on devnet with one series on two test mints (QBB base, QBQ quote, 6
+decimals; one lot is 1 QBB, one tick is 0.01 QBQ per QBB). Deployed on 2026-10-30 from commit
+`898c173`; the full record is in
+[docs/devnet.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/devnet.md#deployment-record).
+
+| What | Explorer |
+| --- | --- |
+| Program `3Aq1Aw…6mbo` | [program](https://explorer.solana.com/address/3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo?cluster=devnet) |
+| `init_config`: stores the admin and the devnet deployment id | [transaction](https://explorer.solana.com/tx/2huuko43WVECGZnZk8oe4VyYFKYfom4XXf1Nd83mNPUuXnkshv916nxYtLuF2TKRLDgiSwGwUUVbSd3j5YV6V81Q?cluster=devnet) |
+| `settle`: the taker buys 2 QBB at 25.65 QBQ from a signed quote, 8,595 CU | [transaction](https://explorer.solana.com/tx/5Pz59PQU4AGERy149Z4MYFiS2spssSxHq9w7gKUVyoNGrQ1H4HZENT3t4qhcZ56qzCE1tn8S4HmEL3DdY5xAQvM6?cluster=devnet) |
+| `cancel_all`: the maker voids every nonce below 2 | [transaction](https://explorer.solana.com/tx/61oRAy6waCXcAhBCMf5o4sqmf1dNMDvJRnsnMdgXDijyFndmEc715TeZ1dhu3bdFVNhSV4rcz5zEdSV6Rrxv33R9?cluster=devnet) |
+| Series 0 `6XjcDf…pGh7` | [account](https://explorer.solana.com/address/6XjcDfJ2bUyuoCTZYrwLcJihMAm5eoPuJxN9GNe9pGh7?cluster=devnet) |
+
+The `settle` transaction holds two instructions: the ed25519 precompile, which verifies the
+maker's signature over the 208-byte quote, and quotebook's `settle`, which reads that quote
+from the instructions sysvar and moves both legs.
+
+#### Reproducing it
+
+Inspect the live deployment with the CLI (`cargo build --release -p quotebook-cli`; no keys
+needed):
+
+```sh
+QB=(--url https://api.devnet.solana.com --program-id 3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo)
+quotebook-admin show $QB
+quotebook-admin show-series $QB --series 6XjcDfJ2bUyuoCTZYrwLcJihMAm5eoPuJxN9GNe9pGh7
+```
+
+Only its admin can add series to this deployment, and its maker service is not running, so
+to run the whole flow yourself deploy your own copy: `make pre-push` builds the program, then
+follow [docs/devnet.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/devnet.md)
+with your own keypairs and devnet SOL (about 5 SOL covers the deploy, the accounts and
+funding a maker and a taker). In order:
+
+1. `solana program deploy` with the upgradeable loader, then `quotebook-admin init-config`.
+2. Two test mints with `spl-token create-token --decimals 6`, token accounts for the maker
+   and the taker, and some tokens minted to each.
+3. `quotebook-admin create-series`, `init-maker` and `approve` on both maker accounts.
+4. `quotebook-maker` with a fixed `--mid`: it refuses quotes for its 70 s cold start, then
+   serves them.
+5. `quotebook-taker settle`: it requests a quote, checks it against the chain, sends
+   `[ed25519 precompile, settle]` and prints the signature.
+6. `quotebook-admin cancel-all` withdraws the maker's outstanding quotes.
 
 ### Features
 
@@ -233,7 +280,8 @@ reads the accounts.
 
 #### CLI over RPC
 
-With `QB="--url <RPC_URL> --program-id <PROGRAM_ID>"` (keypair options take file paths):
+With `QB=(--url <RPC_URL> --program-id <PROGRAM_ID>)`, an array so it also splits in zsh (keypair
+options take file paths):
 
 ```sh
 quotebook-admin init-config $QB --admin upgrade-authority.json --payer payer.json
