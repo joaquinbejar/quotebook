@@ -1,6 +1,29 @@
-# QuoteBook
-
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Stars](https://img.shields.io/github/stars/joaquinbejar/quotebook.svg)](https://github.com/joaquinbejar/quotebook/stargazers)
+[![Issues](https://img.shields.io/github/issues/joaquinbejar/quotebook.svg)](https://github.com/joaquinbejar/quotebook/issues)
+[![PRs](https://img.shields.io/github/issues-pr/joaquinbejar/quotebook.svg)](https://github.com/joaquinbejar/quotebook/pulls)
+
+## QuoteBook v0.1.0: Firm RFQ Quotes on Solana
+
+### Table of Contents
+1. [Introduction](#introduction)
+2. [Status](#status)
+3. [Features](#features)
+4. [Architecture](#architecture)
+5. [Accounts](#accounts)
+6. [Instructions](#instructions)
+7. [Quote Format](#quote-format)
+8. [Nonces, Cancels and Restarts](#nonces-cancels-and-restarts)
+9. [Token-2022](#token-2022)
+10. [Setup Instructions](#setup-instructions)
+11. [Usage Examples](#usage-examples)
+12. [Testing and Benchmarks](#testing-and-benchmarks)
+13. [Compute Units](#compute-units)
+14. [Error Codes](#error-codes)
+15. [Security Notes](#security-notes)
+16. [Contribution and Contact](#contribution-and-contact)
+
+### Introduction
 
 Request-for-quote trading on Solana with firm quotes signed off chain.
 
@@ -11,10 +34,33 @@ verified exactly this quote by this maker, checks its time window and replay sta
 the two tokens atomically from both wallets. There is no order book, no deposit, no maker
 transaction per quote and no crank. Withdrawing every outstanding quote is one `cancel_all`.
 
-**Status:** v1 complete through milestone 6 of [docs/PLAN.md](docs/PLAN.md); devnet
-deployment (milestone 7) is prepared in [docs/devnet.md](docs/devnet.md) and not done yet.
+### Status
 
-## Architecture
+v1 is complete through milestone 6 of [docs/PLAN.md](docs/PLAN.md), and the milestone 7
+tooling (admin CLI, maker binary, taker CLI over RPC) is merged. The devnet deployment is
+prepared in [docs/devnet.md](docs/devnet.md) but **not deployed yet**: there is no public
+program id. The crates are not published on crates.io; use them from this repository.
+
+### Features
+
+- **One transaction per fill**: `[ed25519 precompile, settle]`; the maker sends nothing per quote.
+- **No deposits**: makers approve a delegate PDA on their own token accounts; `settle` can only
+  move funds of the maker named in the verified quote.
+- **Signature binding**: the program reads the exact bytes the precompile verified, from a
+  self-contained precompile instruction (every index `0xFFFF`), and decodes a canonical
+  208-byte quote bound to program, series, deployment and optionally taker.
+- **Replay protection**: a 16,384-nonce sliding window per maker, `cancel_all` and `cancel_nonce`.
+- **Partial fills** between the series `min_size` and the quoted size (one fill per nonce).
+- **SPL Token and Token-2022**, with an explicit extension allowlist.
+- **Pinocchio 0.11**, `no_std`, no allocator, zero-copy `Pod` accounts; `settle` costs about
+  8.6k CU on SPL Token.
+- **Off-chain tooling**: a Rust SDK, a maker service (market-maker-rs Avellaneda-Stoikov
+  pricing, price bounds, nonce issuance, WebSocket RFQ), a taker client, and three CLIs.
+- **Strict lints**: `unsafe_code`, `panic`, `unwrap_used`, `indexing_slicing`,
+  `arithmetic_side_effects` and `float_arithmetic` are denied workspace wide, with a lint
+  control crate that proves the lints fire.
+
+### Architecture
 
 | Crate | Path | What it is |
 | --- | --- | --- |
@@ -45,7 +91,7 @@ account it pays from, and `settle` moves the maker's leg with that delegate and 
 leg with the taker's signature. A `settle` bug can only reach the maker named in the verified
 quote.
 
-## Accounts
+### Accounts
 
 Every account starts with an 8-byte header `{ tag, version, bump, _pad[5] }` and is `Pod`.
 
@@ -56,7 +102,7 @@ Every account starts with an 8-byte header `{ tag, version, bump, _pad[5] }` and
 | `MakerState` | `["maker", maker]` | 2,120 | fill count, delegate bump, the 16,384-nonce replay window. Permanent: there is no close in v1, because re-creating it would reset the replay window |
 | delegate | `["delegate", maker]` | none | signs the maker's leg of `settle` |
 
-## Instructions
+### Instructions
 
 | Tag | Instruction | Signers | Effect |
 | ---: | --- | --- | --- |
@@ -73,7 +119,7 @@ Every PDA is created with its canonical bump and survives pre-funding (anyone ca
 lamports to a PDA address before it exists). The program's account order for each instruction
 is documented in `program/src/processor/`; the SDK builds them in that order.
 
-## Quote format
+### Quote Format
 
 A quote is 208 bytes, little-endian, defined once in `quotebook_core::Quote`. The program never
 re-serializes it: it decodes exactly the bytes the precompile verified.
@@ -105,7 +151,7 @@ series is not paused; the taker is not the maker and is the bound taker (or the 
 `min_size ≤ fill_size ≤ size`; both amounts fit `u64`; and the nonce is fresh. A fill uses the
 nonce whatever its size: the rest of the quote is void.
 
-## Nonces, cancels and restarts
+### Nonces, Cancels and Restarts
 
 Each maker has a 16,384-bit replay window above a watermark. A nonce at or beyond the window's
 top slides it forward and drops the oldest nonces. `cancel_all(new_min)` is the same slide,
@@ -126,7 +172,7 @@ before. `NonceIssuer::resume` refuses every quote until `started_at + max_quote_
 (a 70 s cold start at 60 s), and then until it is refreshed with the maker's on-chain window
 read from that time on, so it starts above every nonce used.
 
-## Token-2022
+### Token-2022
 
 Series mints may be SPL Token or Token-2022. A Token-2022 mint may carry only these
 extensions: `MintCloseAuthority`, `DefaultAccountState` (not `Frozen`),
@@ -137,7 +183,84 @@ delegates, non-transferable and pausable mints, and any type added after
 spl-token-2022-interface 3.1.2. At `settle`, CPI Guard on the taker's paying account and
 required memos on a receiving account are rejected up front.
 
-## Compute units
+### Setup Instructions
+
+Requirements: the Rust toolchain pinned in `rust-toolchain.toml`, and the Agave CLI for
+`cargo build-sbf` (needed by `make program`, `make test` and `make bench`).
+
+```sh
+git clone https://github.com/joaquinbejar/quotebook.git
+cd quotebook
+make program                              # builds target/deploy/quotebook_program.so
+cargo build --release -p quotebook-cli    # quotebook-admin, quotebook-maker, quotebook-taker
+```
+
+### Usage Examples
+
+#### Local demo
+
+```sh
+cargo run -p quotebook-maker --example demo   # two makers and a taker, settled in LiteSVM
+```
+
+Two maker services price from a fixed mid with different risk aversion; the taker requests a
+quote from both, verifies each against every rule the program checks, ranks them and settles
+the best.
+
+#### Building a fill with the SDK
+
+```rust
+use quotebook_sdk::{settle_instructions, SettleAccounts};
+use quotebook_sdk::core::{BaseLots, Quote};
+
+// `quote` and `signature` come from the maker (208 bytes + 64 bytes);
+// `accounts` names the taker, both mints, their token programs and the four token accounts.
+let [precompile_ix, settle_ix] =
+    settle_instructions(&program_id, &quote, &signature, &accounts, BaseLots::new(10), 0);
+// Send [precompile_ix, settle_ix] in that order, signed by the taker.
+```
+
+`quotebook_sdk::ix` has a builder for every instruction (`init_config`, `create_series`,
+`init_maker`, `cancel_all`, `cancel_nonce`, `set_series_paused`, `set_config`, `settle`,
+`approve_delegate`), `quotebook_sdk::pda` derives every address and `quotebook_sdk::decode`
+reads the accounts.
+
+#### CLI over RPC
+
+With `QB="--url <RPC_URL> --program-id <PROGRAM_ID>"` (keypair options take file paths):
+
+```sh
+quotebook-admin init-config $QB --admin upgrade-authority.json --payer payer.json
+quotebook-admin create-series $QB --admin upgrade-authority.json --payer payer.json \
+  --base <BASE_MINT> --quote <QUOTE_MINT> --base-lot <atoms> --quote-lot <atoms> \
+  --max-ttl 60 --min-size 1
+quotebook-admin init-maker $QB --maker maker.json --payer payer.json
+quotebook-admin approve $QB --maker maker.json --payer payer.json \
+  --account <MAKER_TOKEN_ACCOUNT> --amount <ATOMS>
+
+quotebook-maker $QB --series <SERIES> --maker maker.json --maker-base <ACCOUNT> \
+  --maker-quote <ACCOUNT> --listen 0.0.0.0:9000 --mid 25 --ttl 30
+
+quotebook-taker settle $QB --maker ws://<host>:9000 --series <SERIES> --side buy \
+  --size <lots> --taker taker.json --taker-base <ACCOUNT> --taker-quote <ACCOUNT>
+```
+
+`quotebook-admin` also has `show`, `show-series`, `cancel-all`, `cancel-nonce`, `pause` and
+`resume`; `quotebook-taker quote` verifies and prints a quote without sending it. The full
+runbook is [docs/devnet.md](docs/devnet.md).
+
+### Testing and Benchmarks
+
+```sh
+make pre-push   # fmt check, clippy -D warnings, lint-control, program-control, SBF build, tests, docs
+make test       # unit, property and LiteSVM integration tests (builds the program first)
+make bench      # regenerate docs/benchmarks.md
+```
+
+The CLIs are tested end to end against the program in LiteSVM through their `Rpc` trait
+(`cli/tests/e2e.rs`), never against a network.
+
+### Compute Units
 
 Measured in LiteSVM by `make bench`; full table and method in
 [docs/benchmarks.md](docs/benchmarks.md).
@@ -153,7 +276,7 @@ Measured in LiteSVM by `make bench`; full table and method in
 | `settle`, Token-2022 (common / worst case) | 11,998 / 18,188 |
 | ed25519 precompile | 0 (charged as one signature in the fee) |
 
-## Error codes
+### Error Codes
 
 `settle` and the other instructions fail with `ProgramError::Custom(code)`;
 `QuotebookError::from_code` decodes them.
@@ -193,14 +316,71 @@ Measured in LiteSVM by `make bench`; full table and method in
 | 130 | `SelfTrade` | the taker is the quote's maker |
 | 131 | `AccountExtensionUnsupported` | CPI Guard on the taker's paying account, or required memos on a receiving account |
 
-## Development
+### Security Notes
 
-```sh
-make pre-push   # fmt check, clippy -D warnings, lint-control, program-control, SBF build, tests, docs
-make bench      # regenerate docs/benchmarks.md
-cargo run -p quotebook-maker --example demo   # two makers and a taker, settled in LiteSVM
-```
+- The program is **unaudited** and not deployed; do not use it with real funds.
+- `init_config` can only be signed by the program's upgrade authority, so the deployment
+  cannot be front-run. Deploy with the upgradeable loader, never loader-v4.
+- Quotes are bound to program id, series, deployment id (genesis hash prefix) and
+  optionally the taker, so a signed quote cannot be replayed on another cluster or series.
+- A maker's exposure is capped by the delegate allowance it approves on each token account.
+- A restarted maker service cold-starts for `max_quote_ttl + 10 s` and refreshes from the
+  on-chain window before signing again (fail closed).
+- Keep keypair files out of the repository (`.gitignore` ignores `keys/` and `*keypair*.json`).
 
-`make program`, `make test` and `make bench` need the Agave CLI (`cargo build-sbf`). Every
-change follows [rules/global_rules.md](rules/global_rules.md); design decisions and their
+Every change follows [rules/global_rules.md](rules/global_rules.md); design decisions and their
 reasons are in [docs/PLAN.md](docs/PLAN.md).
+
+## Contribution and Contact
+
+We welcome contributions to this project! If you would like to contribute, please follow these steps:
+
+1. Fork the repository.
+2. Create a new branch for your feature or bug fix.
+3. Follow [rules/global_rules.md](https://github.com/joaquinbejar/quotebook/blob/main/rules/global_rules.md) and run
+   `make pre-push` before pushing.
+4. Make your changes and ensure that the project still builds and all tests pass.
+5. Commit your changes and push your branch to your forked repository.
+6. Submit a pull request to the main repository.
+
+If you have any questions, issues, or would like to provide feedback, please feel free to contact the project maintainer:
+
+
+### **Contact Information**
+
+- **Author**: Joaquín Béjar García <https://joaquinbejar.capitaldelta.co/>
+- **Email**: jb@taunais.com
+- **Telegram**: [@joaquin_bejar](https://t.me/joaquin_bejar)
+- **Repository**: <https://github.com/joaquinbejar/quotebook>
+- **Documentation**: <https://github.com/joaquinbejar/quotebook/tree/main/docs>
+
+We appreciate your interest and look forward to your contributions!
+
+## ✍️ License
+
+Licensed under **MIT** license
+
+<!-- related-projects:start -->
+## Related projects
+
+Repositories by the same author that this project depends on, and repositories that depend on it.
+
+### Depends on
+
+| Repository | Description |
+|------------|-------------|
+| [market-maker-rs](https://github.com/joaquinbejar/market-maker-rs) · [crates.io](https://crates.io/crates/market-maker-rs) | Quantitative market making strategies, starting with the Avellaneda-Stoikov model. |
+
+### Reference
+
+| Repository | Description |
+|------------|-------------|
+| [otc-rfq](https://github.com/joaquinbejar/otc-rfq) | Off-chain OTC RFQ service; its price bounds and best-price ranking patterns are reused (copied with attribution, no dependency). |
+
+### Used by
+
+| Repository | Description |
+|------------|-------------|
+| [metalbook](https://github.com/joaquinbejar/metalbook) | Cash-settled European options on gold and silver (XAU, XAG) on Solana, settled in USDC from Pyth. |
+
+<!-- related-projects:end -->
