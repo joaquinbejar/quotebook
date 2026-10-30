@@ -510,6 +510,12 @@ Branch per milestone `feat/m<N>-<name>`, one PR each.
    the maker's token accounts, which `settle` needs. Every chain call goes through an `Rpc`
    trait: `Cluster` on `solana-rpc-client`, LiteSVM in `cli/tests/e2e.rs`, so tests never
    touch a network.
+   Deployed on devnet on 2026-10-30 as `3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo` from
+   commit `898c173`. The runbook ran end to end: `init_config`, series 0 on two test mints,
+   maker init and approvals, a cold-started maker service, one settled fill (8,595 CU, against
+   8,593 in LiteSVM) and a `cancel_all`. Test mints instead of Circle's devnet USDC, because
+   the payer can mint them to every participant. Record in `docs/devnet.md`. Still open: v0.1
+   crate publishing, after the go-ahead.
 
 ## Verified facts (checked 2026-10-28)
 
