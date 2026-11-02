@@ -2933,6 +2933,7 @@ dependencies = [
  "pinocchio",
  "pinocchio-system",
  "pinocchio-token",
+ "proptest",
  "quotebook-core",
  "quotebook-sdk",
  "solana-account",

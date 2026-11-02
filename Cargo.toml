@@ -1,5 +1,7 @@
 [workspace]
 members = ["quotebook-core", "program", "sdk", "maker", "cli", "lint-control", "test-programs/probe"]
+# The libFuzzer targets are their own workspace on a pinned nightly (fuzz/rust-toolchain.toml).
+exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.package]
