@@ -20,6 +20,7 @@ solana-sdk-ids = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+bytemuck = { workspace = true }
 litesvm = { workspace = true, features = ["precompiles"] }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }

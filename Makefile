@@ -60,6 +60,26 @@ test-programs:
 		if [ $$status -ne 0 ]; then echo "test-programs: cargo-build-sbf failed ($$status)"; exit $$status; fi
 	@sh scripts/check-sbf-log.sh target/build-sbf-probe.log
 
+# The TypeScript SDK (ts/; I8): install exactly the locked versions, type-check, run the
+# vector tests, and require that the TypeScript-built settle transaction
+# (ts/vectors/ts-settle.txt, replayed by sdk/tests/ts_settle.rs) is the committed one.
+.PHONY: ts-check
+ts-check:
+	@cd ts && npm ci --no-audit --no-fund --silent
+	@cd ts && npx tsc --noEmit
+	@cd ts && node --test test/
+	@cd ts && node scripts/emit-settle.ts > ../target/ts-settle.txt
+	@diff -u ts/vectors/ts-settle.txt target/ts-settle.txt \
+		|| { echo "ts-check: ts/vectors/ts-settle.txt is stale; run 'cd ts && node scripts/emit-settle.ts > vectors/ts-settle.txt'"; exit 1; }
+
+# The vectors the TypeScript SDK is checked against must be what the Rust crates generate now.
+.PHONY: vectors-check
+vectors-check:
+	@mkdir -p target
+	@cargo run -q $(CARGO_FLAGS) -p quotebook-sdk --example vectors > target/vectors.json
+	@diff -u ts/vectors/vectors.json target/vectors.json \
+		|| { echo "vectors-check: ts/vectors/vectors.json is stale; run 'cargo run -p quotebook-sdk --example vectors > ts/vectors/vectors.json'"; exit 1; }
+
 # Measure every instruction's CU in LiteSVM and regenerate docs/benchmarks.md
 .PHONY: bench
 bench: program
@@ -118,7 +138,7 @@ doc:
 
 # Pre-push checks: must pass with zero warnings
 .PHONY: pre-push
-pre-push: fmt-check lint lint-control program-control program test doc
+pre-push: fmt-check lint lint-control program-control program test doc vectors-check ts-check
 
 .PHONY: clean
 clean:
