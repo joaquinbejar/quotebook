@@ -77,7 +77,7 @@ refuses to build a package that breaks one).
 | Rule | Error |
 | --- | --- |
 | args are exactly `10 + 17 · leg_count` bytes | `InvalidInstructionData` |
-| `1 ≤ leg_count ≤ MAX_LEGS` (8, see Limits) | `MalformedQuote` |
+| `1 ≤ leg_count ≤ MAX_LEGS` (7, see Limits) | `MalformedQuote` |
 | the account list is exactly the shared prefix plus each leg's accounts, fee account included when that series has `fee_bps > 0` | `NotEnoughAccountKeys` / `InvalidInstructionData` |
 | header domain is `quotebook-v2` | `WrongDomain` |
 | header reserved bytes are zero | `MalformedQuote` |
@@ -123,53 +123,87 @@ Instruction `[ed25519 precompile, settle_package]`, like v1.
 
 ## Limits
 
-Sizes are for a legacy transaction, with the taker as the only signer and fee payer, one token
-program and no fee accounts. The precompile instruction carries 320 bytes of data (16 bytes of
-offsets, the 64-byte signature, the 32-byte key and the 208-byte message): 324 bytes encoded.
+Sizes are for a legacy transaction, with the taker as the only signer and fee payer. The
+precompile instruction carries 320 bytes of data (16 bytes of offsets, the 64-byte signature,
+the 32-byte key and the 208-byte message): 324 bytes encoded. The v2 rows are derived from the
+account schema above, not yet measured.
 
-| Case | Bytes | Fits in 1,232? |
-| --- | ---: | --- |
-| v1 `settle`, one quote (today, measured) | 900 | yes |
-| v2, distinct quote mints per leg: `669 + 248·N` | N=2: 1,165; N=3: 1,413 | 2 legs |
-| v2, one shared quote mint (USDC legs): `765 + 152·N` | N=3: 1,221; N=4: 1,373 | 3 legs |
-| v2 with an address lookup table, all but the signer and the two programs looked up: about `581 + 31·N` | N=8: about 829 | size is not the limit |
+### How a package is counted
 
-The v2 rows are derived from the account schema above, not yet measured:
-
-- **Layout:** every leg keeps its 7 account indices, in the order of the schema, even when it
-  repeats an account of another leg; there is no shared quote prefix. An index is 1 byte; a
-  new transaction key is 32.
+- **Layout:** every leg keeps its account indices in the order of the schema (7, or 8 with a
+  fee account), even when it repeats an account of another leg; there is no shared quote
+  prefix. An index is 1 byte; each unique transaction key is 32.
 - **Fixed part, 669 bytes:** 1 + 64 for the signature, 3 for the message header, 1 for the key
-  count, 7 shared keys (taker, maker state, delegate PDA, instructions sysvar, token program,
-  quotebook, ed25519 program) at 224, 32 for the blockhash, 1 for the instruction count, 324
-  for the precompile instruction, then for `settle_package` 1 program index, 1 account count,
-  5 shared indices, 1 data length, 1 tag and 10 bytes of fixed args.
-- **Distinct mints, 248 per leg:** 7 new keys (224), 7 indices and 17 bytes of args.
-- **Shared quote mint:** the first leg costs 248; each later leg adds only series, base mint,
-  maker base and taker base as new keys (128) plus 7 indices and 17 bytes of args: 152. So
-  `669 + 248 + 152·(N − 1) = 765 + 152·N`.
+  count, 7 shared keys (taker, maker state, delegate PDA, instructions sysvar, one token
+  program, quotebook, ed25519 program) at 224, 32 for the blockhash, 1 for the instruction
+  count, 324 for the precompile instruction, then for `settle_package` 1 program index, 1
+  account count, 5 shared indices, 1 data length, 1 tag and 10 bytes of fixed args.
+- **A second token program** (an SPL leg next to a Token-2022 leg): one more shared key and
+  index, +33.
+- **Per leg:** 17 bytes of args, 1 byte per account index, 32 per key no earlier leg brought.
+  - Distinct mints: 7 new keys, 248; with a fee account, 8 new keys, 281.
+  - Shared quote mint, after the first leg: 4 new keys (series, base mint, maker base, taker
+    base), 152; with a fee, the SDK passes the same canonical fee account for the shared mint,
+    so only its index is new, 153.
+- **Unique keys** (what the account-lock limit counts): `7 + T + (7 + F)·N` with distinct mints
+  and `7 + T + 3 + F + 4·N` with a shared quote mint, where `T` is 1 with a second token
+  program and `F` is 1 with a fee on every leg.
 - **Compact lengths:** every compact-u16 above is 1 byte while its value is below 128; the
-  data length (`11 + 17·N`) passes that at N=7, which only the lookup-table row reaches.
+  data length (`11 + 17·N`) passes that at N=7, which only the lookup-table rows reach.
 
-Each table row becomes a test with the code: the real SDK serializer builds the boundary
-packages (2 legs distinct and 3 shared must fit; 3 distinct and 4 shared must not) and the
-test asserts the exact sizes, so a schema change that moves a boundary fails the build.
+### Sizes and account counts
 
-- **Accounts:** a package with distinct mints references `7 + 7·N` accounts; with a shared
-  quote mint, `10 + 4·N` (the quote mint, maker quote and taker quote counted once). The
-  per-transaction account-lock limit (64 at the time of writing; to recheck when this turns
-  into code) caps them at 8 and 13 legs. `MAX_LEGS` is 8 so that every valid package fits the
-  limit whatever its mints; the compute row below may lower it.
-- **Compute (projection, not a bound):** measured v1 `settle` costs (docs/benchmarks.md) are
-  9.2k CU on SPL Token without a fee, 12.2k with a 100 bps fee and 18.8k for the Token-2022
-  worst case. `N ×` those is only a projection: 8 legs would be about 98k and 150k CU.
-  `settle_package` adds work v1 does not do (the canonical checks, `sol_sha256` on
-  `1 + 49·N` bytes, the leg loop, per-leg account and extension checks, repeated accounts
-  across legs), and saves some it shares (one signature parse, one nonce update), so the
-  projection proves nothing.
+| Case (no lookup table) | Bytes | Fits in 1,232 | Unique keys |
+| --- | ---: | --- | ---: |
+| v1 `settle`, one quote (today, measured) | 900 | yes | 14 |
+| distinct mints, no fee: `669 + 248·N` | N=2: 1,165; N=3: 1,413 | 2 legs | `7 + 7·N` |
+| distinct mints, fee on every leg: `669 + 281·N` | N=2: 1,231; N=3: 1,512 | 2 legs (1 byte spare) | `7 + 8·N` |
+| distinct mints, no fee, two token programs: `702 + 248·N` | N=2: 1,198 | 2 legs | `8 + 7·N` |
+| distinct mints, fee, two token programs: `702 + 281·N` | N=1: 983; N=2: 1,264 | 1 leg | `8 + 8·N` |
+| shared quote mint, no fee: `765 + 152·N` | N=3: 1,221; N=4: 1,373 | 3 legs | `10 + 4·N` |
+| shared quote mint, fee: `797 + 153·N` | N=2: 1,103; N=3: 1,256 | 2 legs | `11 + 4·N` |
+| shared quote mint, fee, two token programs: `830 + 153·N` | N=2: 1,136; N=3: 1,289 | 2 legs | `12 + 4·N` |
+
+With an address lookup table (a v0 transaction, every key but the signer and the two programs
+looked up), a leg costs its indices and args plus one lookup index per new key: about
+`581 + 31·N` without fees and `581 + 33·N` with a fee on every leg (N=7: about 812). Size
+stops binding; the unique-key count does not change, because looked-up accounts are locked
+too.
+
+### `MAX_LEGS` and admission
+
+- **`MAX_LEGS` is 7.** The worst case for keys is distinct mints, a fee on every leg and two
+  token programs: `8 + 8·N`, which is 64 at N=7 and 72 at N=8. With the account-lock limit at
+  64 (at the time of writing; to recheck when this turns into code), 7 is the largest count
+  every canonical package fits whatever its mints, fees and programs. The compute gate below
+  may lower it, never raise it.
+- **Size and keys are a separate admission constraint.** The program bounds only `leg_count`;
+  the runtime already rejects a transaction above 1,232 bytes or the lock limit, so an
+  oversized package cannot settle, it just fails. The SDK makes that failure early and
+  explicit: `settle_package_instructions` computes the exact serialized size and unique-key
+  count of the transaction it would build (with or without the lookup table) and returns a
+  typed error (`PackageTooLarge { bytes }`, `TooManyAccounts { keys }`) instead of a
+  transaction the cluster drops. The maker service runs the same check on a package request
+  and refuses to sign a package the requester could not settle.
+- **Boundary tests, with the code:** the real SDK serializer builds the boundary package of
+  every table row, one that fits and the next that does not (for example 2 and 3 legs with
+  distinct mints and fees, 1 and 2 with two token programs, 3 and 4 with a shared quote mint),
+  and asserts the exact byte and key counts; and the worst-case 7-leg package (distinct mints,
+  fees, two token programs, lookup table) settles in LiteSVM at exactly 64 keys. A schema
+  change that moves a boundary fails the build.
+
+### Compute
+
+- **Projection, not a bound:** measured v1 `settle` costs (docs/benchmarks.md) are 9.2k CU on
+  SPL Token without a fee, 12.2k with a 100 bps fee and 18.8k for the Token-2022 worst case.
+  `N ×` those is only a projection: 7 legs would be about 85k and 132k CU. `settle_package`
+  adds work v1 does not do (the canonical checks, `sol_sha256` on `1 + 49·N` bytes, the leg
+  loop, per-leg account and extension checks, repeated accounts across legs), and saves some
+  it shares (one signature parse, one nonce update), so the projection proves nothing.
 - **Measurement gate:** the code PR adds `make bench` rows for `settle_package` at 2 legs and
-  at `MAX_LEGS`, on SPL Token and on the Token-2022 worst case, with a fee on every leg. It
-  does not merge until those rows are in docs/benchmarks.md; if the `MAX_LEGS` row exceeds
+  at `MAX_LEGS`, on SPL Token and on the Token-2022 worst case, with a fee on every leg and,
+  for `MAX_LEGS`, two token programs and the lookup table. It does not merge until those rows
+  are in docs/benchmarks.md and the boundary tests above pass; if the `MAX_LEGS` row exceeds
   the 200k default per instruction, `MAX_LEGS` drops to the largest measured count below it,
   and the SDK sets a compute-unit limit from the measured rows.
 - **Rent and state:** none new. A package uses one nonce of the maker's existing window.
@@ -218,8 +252,8 @@ maker would need two cancel paths for one intent ("cancel everything").
   unchanged.
 - The shared window: a v1 nonce cannot fill a package and the reverse; `cancel_all` covers
   both.
-- Limits: the serialized boundary packages of the size table, with and without a lookup
-  table, and the measured CU rows of the gate above.
+- Limits: the boundary tests and the measured CU rows of Limits, and the SDK's
+  `PackageTooLarge` and `TooManyAccounts` errors on the first package past each boundary.
 - Fuzzing: the header decoder and the leg args join the I6 targets.
 
 ## Open questions
