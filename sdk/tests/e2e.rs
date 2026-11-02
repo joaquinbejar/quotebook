@@ -269,12 +269,20 @@ fn test_sdk_end_to_end() {
     // Incident step: the maker revokes the delegate on the account it pays from. A fresh,
     // validly signed quote then cannot settle: the token program refuses the delegate PDA.
     vm.send(
-        &[ix::revoke_delegate(&token_program(), &maker_quote, &maker.pubkey())],
+        &[ix::revoke_delegate(
+            &token_program(),
+            &maker_quote,
+            &maker.pubkey(),
+        )],
         &[&maker],
     )
     .unwrap();
     let mq = vm.account(&maker_quote);
-    assert_eq!(u32::from_le_bytes(mq.data[72..76].try_into().unwrap()), 0, "delegate unset");
+    assert_eq!(
+        u32::from_le_bytes(mq.data[72..76].try_into().unwrap()),
+        0,
+        "delegate unset"
+    );
     let fresh = Quote::new(QuoteTerms {
         nonce: Nonce::new(3),
         ..*quote.terms()
