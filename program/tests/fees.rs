@@ -367,3 +367,110 @@ fn test_withdraw_fees_happy_path_and_rejections() {
     assert_eq!(m.env.token_amount(&fa), 0);
     assert_eq!(m.env.token_amount(&dest), collected);
 }
+
+#[test]
+fn test_withdraw_fees_meta_and_account_matrix() {
+    let mut m = fee_market(MarketSpec::default());
+    m.settle(priced(&m, Side::Bid), 10).unwrap();
+    let fa = m.fee_account.unwrap();
+    let (qm, qp, bm) = (m.quote_mint, m.quote_program, m.base_mint);
+    let stranger = Keypair::new().pubkey();
+    let dest = m.env.token_account(qp, &qm, &stranger, 0, None, &[]);
+    let admin = m.env.admin.insecure_clone();
+    let cfg = config_address();
+    let base = withdraw_ix(&admin.pubkey(), &cfg, &fa, &dest, &qm, &qp, 1);
+    let with = |i: usize, f: &dyn Fn(&mut AccountMeta)| {
+        let mut ix = base.clone();
+        f(&mut ix.accounts[i]);
+        ix
+    };
+    let bad_token = qb(QuotebookError::InvalidVaultOrTokenAccount);
+
+    // The admin does not sign.
+    let ix = with(0, &|a| a.is_signer = false);
+    m.env
+        .rejected(ix, &[], qb(QuotebookError::MissingSignature));
+
+    // Config: owned by another program, a bump that does not derive it, a copy at a non-PDA
+    // address, another account type in its place.
+    let original = m.env.svm.get_account(&cfg).unwrap();
+    let mut foreign = original.clone();
+    foreign.owner = Address::new_from_array([7; 32]);
+    m.env.svm.set_account(cfg, foreign).unwrap();
+    m.env.rejected(
+        base.clone(),
+        &[&admin],
+        qb(QuotebookError::InvalidAccountOwner),
+    );
+    let mut bad_bump = original.clone();
+    bad_bump.data[2] = bad_bump.data[2].wrapping_sub(1); // Hdr.bump
+    m.env.svm.set_account(cfg, bad_bump).unwrap();
+    m.env
+        .rejected(base.clone(), &[&admin], qb(QuotebookError::InvalidPda));
+    m.env.svm.set_account(cfg, original.clone()).unwrap();
+    let copy = Keypair::new().pubkey();
+    m.env.svm.set_account(copy, original.clone()).unwrap();
+    let ix = with(1, &|a| a.pubkey = copy);
+    m.env
+        .rejected(ix, &[&admin], qb(QuotebookError::InvalidPda));
+    let series = m.series;
+    let ix = with(1, &|a| a.pubkey = series);
+    m.env
+        .rejected(ix, &[&admin], InstructionError::InvalidAccountData);
+
+    // Token program: Token-2022 for an SPL mint, and a non-token program.
+    let ix = with(5, &|a| a.pubkey = token_2022_program());
+    m.env
+        .rejected(ix, &[&admin], InstructionError::IncorrectProgramId);
+    let ix = with(5, &|a| a.pubkey = SYSTEM);
+    m.env
+        .rejected(ix, &[&admin], InstructionError::IncorrectProgramId);
+
+    // Source and destination read-only.
+    let ix = with(2, &|a| a.is_writable = false);
+    m.env.rejected(ix, &[&admin], InstructionError::Immutable);
+    let ix = with(3, &|a| a.is_writable = false);
+    m.env.rejected(ix, &[&admin], InstructionError::Immutable);
+
+    // Source: frozen, and a Config-owned account under another program.
+    let fee_original = m.env.svm.get_account(&fa).unwrap();
+    let mut frozen = fee_original.clone();
+    frozen.data[108] = 2; // AccountState::Frozen
+    m.env.svm.set_account(fa, frozen).unwrap();
+    m.env.rejected(base.clone(), &[&admin], bad_token.clone());
+    m.env.svm.set_account(fa, fee_original.clone()).unwrap();
+    let foreign_src = Keypair::new().pubkey();
+    let data = token_account_data(&qm, &cfg, 5_000, None, 1, &[]);
+    m.env
+        .set(foreign_src, Address::new_from_array([7; 32]), data);
+    let ix = with(2, &|a| a.pubkey = foreign_src);
+    m.env.rejected(ix, &[&admin], bad_token.clone());
+
+    // Destination: frozen, owned by another program, of another mint.
+    let frozen_dest = Keypair::new().pubkey();
+    let data = token_account_data(&qm, &stranger, 0, None, 2, &[]);
+    m.env.set(frozen_dest, qp, data);
+    let ix = with(3, &|a| a.pubkey = frozen_dest);
+    m.env.rejected(ix, &[&admin], bad_token.clone());
+    let foreign_dest = Keypair::new().pubkey();
+    let data = token_account_data(&qm, &stranger, 0, None, 1, &[]);
+    m.env
+        .set(foreign_dest, Address::new_from_array([7; 32]), data);
+    let ix = with(3, &|a| a.pubkey = foreign_dest);
+    m.env.rejected(ix, &[&admin], bad_token.clone());
+    let other_mint_dest = m.env.token_account(qp, &bm, &stranger, 0, None, &[]);
+    let ix = with(3, &|a| a.pubkey = other_mint_dest);
+    m.env.rejected(ix, &[&admin], bad_token);
+
+    // Too few accounts.
+    let mut ix = base.clone();
+    ix.accounts.pop();
+    #[allow(deprecated)]
+    let not_enough = InstructionError::NotEnoughAccountKeys;
+    m.env.rejected(ix, &[&admin], not_enough);
+
+    // Nothing moved; the valid withdrawal still works.
+    assert_eq!(m.env.token_amount(&fa), 1_000);
+    m.env.send(&[base], &[&admin]).unwrap();
+    assert_eq!(m.env.token_amount(&dest), 1);
+}

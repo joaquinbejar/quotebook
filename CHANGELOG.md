@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Series fees (ADR 0001): `create_series` takes an optional `fee_bps` (at most
+  `MAX_FEE_BPS` = 100), stored immutably in the series; the taker pays it, floor-rounded, into a
+  Config-owned fee account; `withdraw_fees` (tag 8) moves collected fees out.
+- The maker registry (ADR 0002): `set_profile` (tag 9) and `close_profile` (tag 10) over a
+  `MakerProfile` PDA `["profile", maker]`; `quotebook-taker discover` and `--discover` /
+  `--allow` on `quote` and `settle`; `quotebook-admin set-profile` and `close-profile`.
+- `quotebook-maker`: the WebSocket client speaks TLS (`wss://`).
+
+### Changed (breaking, for 0.2.0)
+
+- `quotebook-core`: `QuotebookError` gains `FeeTooHigh` (132), `InsufficientFees` (133) and
+  `InvalidProfile` (134), and `ALL` has 35 entries; `Series._reserved` becomes `fee_bps` plus
+  6 reserved bytes; `CreateSeriesArgs` gains `fee_bps` and `encode` returns
+  `EncodedCreateSeriesArgs` (32 or 34 bytes); new `fee`, `profile` and `MakerProfile`.
+- `quotebook-sdk`: `SettleAccounts` gains `fee_account: Option<Address>`, so struct literals
+  must set it; new `withdraw_fees`, `create_fee_account`, `set_profile`, `close_profile` and
+  `maker_profile`.
+
 ## [0.1.1] - 2026-10-30
 
 ### Fixed

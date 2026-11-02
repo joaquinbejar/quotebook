@@ -740,3 +740,18 @@ pub fn set_config_ix(admin: &Address, new_admin: &Address) -> Instruction {
         ],
     )
 }
+
+impl Env {
+    /// Sends one failing instruction: asserts the exact error, and that no account the
+    /// instruction names changed (the fee payer, who pays the transaction fee, excepted).
+    pub fn rejected(&mut self, ix: Instruction, signers: &[&Keypair], err: InstructionError) {
+        let watched: Vec<Address> = ix.accounts.iter().map(|a| a.pubkey).collect();
+        let before: Vec<_> = watched.iter().map(|a| self.svm.get_account(a)).collect();
+        assert_ix_err(self.send(&[ix], signers), err);
+        for (address, old) in watched.iter().zip(before) {
+            if *address != self.payer.pubkey() {
+                assert_eq!(self.svm.get_account(address), old, "{address} changed");
+            }
+        }
+    }
+}

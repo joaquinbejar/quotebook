@@ -233,3 +233,100 @@ fn test_settle_never_takes_the_profile() {
     assert_eq!(ix.accounts.len(), 13);
     assert!(ix.accounts.iter().all(|a| a.pubkey != p));
 }
+
+#[test]
+fn test_set_profile_meta_and_account_matrix() {
+    let mut env = Env::new();
+    let maker = funded(&mut env);
+    let p = profile_address(&maker.pubkey());
+    let base = set_ix(&maker.pubkey(), &env.payer.pubkey(), &p, b"wss://a.io", b"");
+
+    // Create path. Maker not a signer.
+    let mut ix = base.clone();
+    ix.accounts[0].is_signer = false;
+    env.rejected(ix, &[], qb(QuotebookError::MissingSignature));
+    // A payer that does not sign (another funded key, so the fee payer stays separate).
+    let payer2 = funded(&mut env);
+    let mut ix = set_ix(&maker.pubkey(), &payer2.pubkey(), &p, b"wss://a.io", b"");
+    ix.accounts[1].is_signer = false;
+    env.rejected(ix, &[&maker], qb(QuotebookError::MissingSignature));
+    // A read-only payer.
+    let mut ix = set_ix(&maker.pubkey(), &payer2.pubkey(), &p, b"wss://a.io", b"");
+    ix.accounts[1].is_writable = false;
+    env.rejected(ix, &[&maker, &payer2], InstructionError::Immutable);
+    // A read-only profile.
+    let mut ix = base.clone();
+    ix.accounts[2].is_writable = false;
+    env.rejected(ix, &[&maker], InstructionError::Immutable);
+    // A forged system program.
+    let mut ix = base.clone();
+    ix.accounts[3].pubkey = Keypair::new().pubkey();
+    env.rejected(ix, &[&maker], InstructionError::IncorrectProgramId);
+    // The token program in its place.
+    let mut ix = base.clone();
+    ix.accounts[3].pubkey = token_program();
+    env.rejected(ix, &[&maker], InstructionError::IncorrectProgramId);
+    // A non-PDA address for the profile.
+    let mut ix = base.clone();
+    ix.accounts[2].pubkey = Keypair::new().pubkey();
+    env.rejected(ix, &[&maker], qb(QuotebookError::InvalidPda));
+    assert!(env.svm.get_account(&p).is_none());
+
+    // Update path: a stored bump that does not derive the profile's address.
+    set(&mut env, &maker, &p, b"wss://a.io", b"").unwrap();
+    let good = env.data(&p);
+    let mut bad_bump = good.clone();
+    bad_bump[2] = bad_bump[2].wrapping_sub(1); // Hdr.bump
+    env.set(p, PROGRAM_ID, bad_bump);
+    let ix = set_ix(&maker.pubkey(), &env.payer.pubkey(), &p, b"wss://b.io", b"");
+    env.rejected(ix, &[&maker], qb(QuotebookError::InvalidPda));
+    env.set(p, PROGRAM_ID, good.clone());
+    // Update path, read-only profile.
+    let mut ix = set_ix(&maker.pubkey(), &env.payer.pubkey(), &p, b"wss://b.io", b"");
+    ix.accounts[2].is_writable = false;
+    env.rejected(ix, &[&maker], InstructionError::Immutable);
+    assert_eq!(env.data(&p), good);
+}
+
+#[test]
+fn test_close_profile_meta_and_account_matrix() {
+    let mut env = Env::new();
+    let maker = funded(&mut env);
+    let p = profile_address(&maker.pubkey());
+    set(&mut env, &maker, &p, b"wss://a.io", b"").unwrap();
+    let dest = Keypair::new().pubkey();
+    let base = close_ix(&maker.pubkey(), &p, &dest);
+
+    let mut ix = base.clone();
+    ix.accounts[0].is_signer = false;
+    env.rejected(ix, &[], qb(QuotebookError::MissingSignature));
+    let mut ix = base.clone();
+    ix.accounts[1].is_writable = false;
+    env.rejected(ix, &[&maker], InstructionError::Immutable);
+    let mut ix = base.clone();
+    ix.accounts[2].is_writable = false;
+    env.rejected(ix, &[&maker], InstructionError::Immutable);
+    // The profile as its own destination.
+    env.rejected(
+        close_ix(&maker.pubkey(), &p, &p),
+        &[&maker],
+        InstructionError::InvalidArgument,
+    );
+    // A stored bump that does not derive the address.
+    let good = env.data(&p);
+    let mut bad_bump = good.clone();
+    bad_bump[2] = bad_bump[2].wrapping_sub(1); // Hdr.bump
+    env.set(p, PROGRAM_ID, bad_bump);
+    env.rejected(base.clone(), &[&maker], qb(QuotebookError::InvalidPda));
+    env.set(p, PROGRAM_ID, good);
+    // Too few accounts.
+    let mut ix = base.clone();
+    ix.accounts.pop();
+    // `ProgramError::NotEnoughAccountKeys`, under the runtime's deprecated name.
+    #[allow(deprecated)]
+    let not_enough = InstructionError::NotEnoughAccountKeys;
+    env.rejected(ix, &[&maker], not_enough);
+    // The valid close still works afterwards.
+    env.send(&[base], &[&maker]).unwrap();
+    assert!(env.svm.get_account(&p).is_none_or(|a| a.lamports == 0));
+}
