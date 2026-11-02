@@ -134,7 +134,10 @@ Deployed on 2026-10-30 from the Mac Studio with Agave `solana-cli` 4.4.0 and
 | Program id | `3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo` |
 | Loader | `BPFLoaderUpgradeab1e11111111111111111111111` |
 | `ProgramData` | `FvGuwVkTTgTuz1aBfxkxgTfnrrazktc4oXDmyohymqfN` (35,032 bytes, slot 516765399) |
-| Upgrade authority, admin and payer | `77ieYLKspRnGzAt1AK6ZVsttnTY6T7EY2k7CpTZeCPPV` |
+| Upgrade authority, admin and payer | `77ieYLKspRnGzAt1AK6ZVsttnTY6T7EY2k7CpTZeCPPV` until 2026-11-02 |
+| Upgrade authority since 2026-11-02 (I3) | `248gnwHHesqhQURgrkfpqfj48NK1oN1fh5qcUnTRssfy` (`~/.config/solana/quotebook-devnet/upgrade-authority.json`) |
+| Config admin since 2026-11-02 (I3) | `GZhm3AUm4YxjiK9uurq8R5TDYGMekuik81y9JPiotVnL` (`~/.config/solana/quotebook-devnet/admin.json`) |
+| Payer | `77ie…CPPV`, no authority. See [`governance.md`](governance.md) |
 | Deployed commit | `898c173d1916404f8579514a4b034aeff129440b` (first deployment, macOS build) |
 | `.so` SHA-256 | `d7c2f1de7114751cb05849a981924956bb0e632ae5f849cc9fd62caa7fc721e7` (first deployment) |
 | Current binary | the reproducible build of `92cdd22` (same program code), SHA-256 `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776`, upgraded 2026-11-02 in slot 517802812, signature `2NDo6wEyNUeVGcxxJ7igHEGpoVmK4HXunov8QjJ8Mu9XvwuED3zG7Xj622JpxydQUwcqWXdahR8TyWjtUrXx2VJg`. How to check it: [`verifiable-build.md`](verifiable-build.md) |
