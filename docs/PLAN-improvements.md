@@ -478,18 +478,51 @@ request. At a mid of 3,000 the same defaults would give a spread of about 0.04%,
 tight.
 
 **Change:**
-- The spread and its caps are expressed in basis points of the mid: a half-spread floor and
-  cap, and the inventory skew. The service derives the model's price-unit parameters from
-  the mid at each quote, so one set of defaults works at any price level.
-- The existing flags stay as advanced overrides, documented as absolute.
-- Rounding stays exact and toward the maker.
+- **Spread:** the half-spread and the inventory skew are expressed in basis points of the
+  mid:
+  - `min_half_spread_bps` (floor) and `max_half_spread_bps` (cap);
+  - `max_skew_bps`, the cap on how far inventory may move the reservation price from the mid.
+  The service derives the model's price-unit parameters from the mid at each quote, so one
+  set of defaults works at any price level.
+- **Precedence**, in order:
+  1. the model computes a reservation price and a half-spread, from the defaults or from
+     the absolute advanced overrides (the existing flags, documented as absolute);
+  2. the skew is clamped to `max_skew_bps` and the half-spread to
+     `[min_half_spread_bps, max_half_spread_bps]`. The clamps always apply, overrides
+     included;
+  3. the prices are rounded to the tick, the bid down and the ask up, with exact integer
+     math, toward the maker;
+  4. the deviation guard (5% of the mid by default) checks the rounded prices last. A failed
+     guard is a refusal, never a silent re-price.
+- **Infeasible quotes are typed refusals.** When no rounded pair passes every rule, the
+  service refuses with an error that names the cause:
+  - `TickTooCoarse`: the tick makes either side deviate beyond the guard, for example mid
+    0.01 with a 0.01 tick;
+  - `NonPositiveBid`: the rounded bid is 0 or below.
+  The taker sees an error instead of a bad price.
+
+**Domain:** a quote is guaranteed when `tick ≤ mid × guard / 2` and
+`mid × (1 - guard) ≥ tick` (the bid stays positive). Outside it, the typed refusals above.
+
+**Ordering:**
+- At zero inventory: `bid < mid < ask`.
+- At any inventory:
+  - `bid < ask`;
+  - `bid < reservation < ask`;
+  - `|reservation - mid| ≤ max_skew_bps` of the mid;
+  - both prices within the guard of the mid.
+  With inventory, the mid may fall outside `[bid, ask]` by at most the skew cap. That is
+  what skew is for.
 
 **Tests:**
-- At a mid of 1.20 and at a mid of 3,000, the default quote's half-spread lies within the
-  configured bps bounds, the deviation guard accepts it, and bid < mid < ask after
-  rounding to the tick.
-- A property test over mids from 0.01 to 1,000,000 checks the same three facts.
-- A regression test reproduces the I9 failure with the old absolute defaults.
+- At mid 1.20 (tick 0.01) and at mid 3,000 (tick 0.01): the default quote at zero inventory
+  has a half-spread within the bps bounds, passes the guard, and has `bid < mid < ask`.
+- A property test over (mid, tick, inventory), with mid from 0.01 to 1,000,000 and tick from
+  1e-6 to 1:
+  - inside the domain, a quote exists and satisfies the ordering rules for its inventory;
+  - outside it, the refusal is exactly `TickTooCoarse` or `NonPositiveBid`.
+- Overrides: absolute flags that would breach a bps clamp are clamped (tested at both caps).
+- Regression: the I9 failure (absolute defaults at mid 1.20) now yields a valid quote.
 
 ## Later (L, design only for now)
 
