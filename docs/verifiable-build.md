@@ -3,16 +3,16 @@
 Milestone I2 of [`PLAN-improvements.md`](PLAN-improvements.md): anyone can rebuild
 `quotebook-program` from a commit, get the same bytes, and compare them with what is deployed.
 
-program-sha256: `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776`
+program-sha256: `e03755a76238fee9decab465a108a8ef3bf8790323a2d5596a88b2179ea3d072`
 
-program-executable-hash: `fe989e9923369050be9c8e266173656fe24aebe9061c9a7d13f3a86ae22d418c`
+program-executable-hash: `0744c011377a3a330862d4b38885f994883874a7536d15b6f3488fc1a57197ca`
 
 The two hashes are different things:
 - `program-sha256` is the plain SHA-256 of the artifact.
 - `program-executable-hash` is what `solana-verify get-executable-hash` prints for it, and so
   what `get-program-hash` must print for the deployed program. It hashes the bytes with the
-  trailing zero bytes trimmed. This artifact ends in 15 zero bytes, which is why the two
-  differ.
+  trailing zero bytes trimmed, which is why the two differ when the artifact ends in zero
+  bytes (the `92cdd22` build ended in 15).
 
 The `program-sha256` line is the SHA-256 of `target/verifiable/quotebook_program.so` built by
 `make verifiable` from the current tree. CI's `verifiable` job rebuilds it and fails if the
@@ -63,6 +63,10 @@ solana program dump 3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo dump.so --url d
 shasum -a 256 dump.so                              # must equal program-sha256 above
 ```
 
+`program-sha256` is the hash of the current tree. The devnet program equals it only when the
+current tree is what was deployed: the deployed commit and hashes are recorded in `devnet.md`
+and in the table below. Between upgrades, devnet runs an older record's binary.
+
 ### Remote verification (OtterSec): not available for this deployment
 
 The plan (I2) asked whether OtterSec's remote verification (`solana-verify verify-from-repo
@@ -90,6 +94,7 @@ one-line change. Its output must match the hash above before the switch.
 | `898c173` | `scripts/verifiable/build.sh` | `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776` | same code, different bytes: the macOS build is not reproducible |
 | `92cdd22` (main) | `scripts/verifiable/build.sh`, twice, on the Studio | `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776` | byte-identical runs. Equal to `898c173`: the program and core code is the same, and the 0.1.1 version bump does not reach the binary |
 | `92cdd22` (main) | CI `verifiable` job on a GitHub runner, native amd64 (run 41416573833) | `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776` | the same bytes on a second machine |
+| `e65b159` (I7, fill event) | `scripts/verifiable/build.sh` on the Studio | `e03755a76238fee9decab465a108a8ef3bf8790323a2d5596a88b2179ea3d072` | executable hash `0744c011377a3a330862d4b38885f994883874a7536d15b6f3488fc1a57197ca`. Not deployed: devnet keeps `a6a324f0…` until the I10 upgrade |
 
 ## Devnet upgrade to the reproducible binary (2026-11-02)
 
@@ -99,7 +104,7 @@ one-line change. Its output must match the hash above before the switch.
 | `solana program deploy` (upgrade, authority `77ie…CPPV`) | `2NDo6wEyNUeVGcxxJ7igHEGpoVmK4HXunov8QjJ8Mu9XvwuED3zG7Xj622JpxydQUwcqWXdahR8TyWjtUrXx2VJg` |
 | Last deployed in slot | 517802812 |
 | `solana-verify get-program-hash` after | `fe989e9923369050be9c8e266173656fe24aebe9061c9a7d13f3a86ae22d418c`, equal to `get-executable-hash` of the binary |
-| `solana program dump` SHA-256 after | `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776`, equal to `program-sha256` |
+| `solana program dump` SHA-256 after | `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776`, equal to the `92cdd22` artifact (then the `program-sha256` line) |
 
 The program and core code is unchanged since `898c173`, so this upgrade changes no
 behaviour. Every account, the program id and outstanding quotes are unaffected. The
