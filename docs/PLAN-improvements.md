@@ -501,8 +501,14 @@ tight.
   - `NonPositiveBid`: the rounded bid is 0 or below.
   The taker sees an error instead of a bad price.
 
-**Domain:** a quote is guaranteed when `tick ≤ mid × guard / 2` and
-`mid × (1 - guard) ≥ tick` (the bid stays positive). Outside it, the typed refusals above.
+**Domain:** a quote is guaranteed when both of these hold:
+- the tick is small enough: `tick ≤ mid × guard / 2`;
+- the configuration is consistent: `max_half_spread_bps + max_skew_bps ≤ guard / 2`, checked
+  at startup, where an inconsistent configuration is a startup error.
+
+Then each rounded side deviates from the mid by at most `guard / 2 + tick ≤ guard`, and the
+bid stays positive (with a guard below 2/3). Outside the domain, the typed refusals above
+apply.
 
 **Ordering:**
 - At zero inventory: `bid < mid < ask`.
