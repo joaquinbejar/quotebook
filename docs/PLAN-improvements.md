@@ -537,8 +537,15 @@ There is no blanket refusal outside the domain.
   what skew is for.
 
 **Tests:**
-- At mid 1.20 (tick 0.01) and at mid 3,000 (tick 0.01): the default quote at zero inventory
-  has a half-spread within the bps bounds, passes the guard, and has `bid < mid < ask`.
+- At mid 1.20 (tick 0.01) and at mid 3,000 (tick 0.01), the default quote at zero inventory
+  satisfies all of these:
+  - before rounding, the clamped half-spread lies within
+    `[min_half_spread_bps, max_half_spread_bps] / 10,000 × mid`;
+  - after rounding, each side's distance from the mid is at most
+    `max_half_spread_bps / 10,000 + tick / mid` of the mid, because rounding adds up to one
+    tick;
+  - the guard holds exactly on the rounded prices;
+  - `bid < mid < ask`.
 - A property test over (mid, tick, inventory), with mid from 0.01 to 1,000,000 and tick from
   1e-6 to 1:
   - inside the domain, a quote always exists and satisfies the ordering rules for its
