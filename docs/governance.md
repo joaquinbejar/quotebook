@@ -79,9 +79,19 @@ across a **compatible** upgrade, one that preserves the v1 quote contract:
 A breaking upgrade, one that changes any of these, needs an explicit plan in its PR, before the
 upgrade:
 - either a compatibility path (new code still accepts v1 quotes and layouts);
-- or a migration plus a quote drain: pause the series, let every outstanding quote expire
-  (`max_quote_ttl + MAX_CLOCK_SKEW`, 70 s at 60 s), or have makers `cancel_all`; upgrade; then
-  resume.
+- or a migration plus a quote drain:
+  1. Pause the series. A pause stops fills, not issuance: a maker service keeps signing quotes
+     from its cached market config, because `MakerService::respond` does not read `paused`.
+  2. Stop or drain every managed maker service (ours).
+  3. Measure the wait from each maker's **last issued quote**: `max_quote_ttl +
+     MAX_CLOCK_SKEW` (70 s at 60 s) after it. Or have each maker `cancel_all` above its last
+     nonce.
+  4. Upgrade, then resume.
+
+  Makers we do not run are permissionless, and nothing makes them stop signing. For them the
+  breaking-upgrade plan must state its own cutoff: either the new code rejects v1 quotes issued
+  before a published cutoff time, or it keeps accepting them (the compatibility path). "Pause
+  and wait" alone does not guarantee that every external quote has expired.
 
 None is planned. I10's fee field reuses reserved bytes that read zero, which keeps it
 compatible.
