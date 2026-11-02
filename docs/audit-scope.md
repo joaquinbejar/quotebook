@@ -102,9 +102,10 @@ The repository's own evidence for these:
 1. **No global pause.** Pausing everything takes one transaction per series
    ([`runbooks.md`](runbooks.md)). `Config` has no reserved bytes, so a global flag would need a
    layout change. Is per-series pausing enough for an RFQ venue?
-2. **Admin recovery.** `set_config` is signed by the current admin, so a compromised admin can
-   only be replaced by a program upgrade ([`governance.md`](governance.md)). Should the upgrade
-   authority be able to reset the admin?
+2. **Admin recovery.** `set_config` is signed by the current admin, and nothing forces a
+   recovery. If the admin key is lost, or an attacker has already rotated it away, only a program
+   upgrade restores control ([`governance.md`](governance.md)). Should the upgrade authority be
+   able to reset the admin?
 3. **Clock skew.** `MAX_CLOCK_SKEW` is 10 s. Is that the right bound against devnet and mainnet
    clock drift, given that it lengthens every quote's on-chain life?
 4. **Token-2022.** Is the mint extension allowlist (PLAN 3.3) complete and safe as the token
