@@ -67,7 +67,7 @@ test-programs:
 ts-check:
 	@cd ts && npm ci --no-audit --no-fund --silent
 	@cd ts && npx tsc --noEmit
-	@cd ts && node --test test/
+	@cd ts && npm test --silent
 	@cd ts && node scripts/emit-settle.ts > ../target/ts-settle.txt
 	@diff -u ts/vectors/ts-settle.txt target/ts-settle.txt \
 		|| { echo "ts-check: ts/vectors/ts-settle.txt is stale; run 'cd ts && node scripts/emit-settle.ts > vectors/ts-settle.txt'"; exit 1; }

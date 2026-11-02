@@ -3,7 +3,7 @@
 # reproduced exactly.
 #
 # The jobs' union is exactly `make pre-push`: `checks` (everything but `test` and `ts-check`),
-# `test` and `ts` (the TypeScript SDK, Node pinned below).
+# `test` and `ts` (the TypeScript SDK, on the minimum and the current Node, pinned below).
 # `bench` regenerates the CU table and requires the committed one. `verifiable` rebuilds the
 # program in scripts/verifiable/Dockerfile and requires the hash recorded in
 # docs/verifiable-build.md. There is no branch
@@ -65,11 +65,17 @@ jobs:
   ts:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The minimum of ts/package.json's `engines.node` (>=24), and the current release.
+        node: ["24.22.0", "26.13.0"]
+    name: ts (node ${{ matrix.node }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "26.13.0"
+          node-version: ${{ matrix.node }}
       - run: mkdir -p target && make ts-check
 
   bench:

@@ -26,9 +26,9 @@ Integers that can exceed 2^53 are `bigint`.
 - `scripts/emit-settle.ts` builds a `[precompile, settle]` transaction with this SDK alone.
   `sdk/tests/ts_settle.rs` replays it against the real program in LiteSVM and checks the
   balances.
-- `make ts-check` runs `npm ci`, `tsc --noEmit`, the tests, and requires the emitted
+- `make ts-check` runs `npm ci`, `tsc --noEmit`, `npm test` (`test/*.test.ts`), and requires the emitted
   transaction to equal the committed one. It is part of `make pre-push`, and runs in CI's `ts`
-  job on Node 26.13.0.
+  job on Node 24.22.0 (the `engines` minimum) and 26.13.0.
 
 Versions (exact, `package-lock.json`; the latest stable on npm, checked 2026-11-02):
 `@solana/kit` 8.6.0, `typescript` 7.0.2, `@types/node` 26.6.6.
