@@ -152,3 +152,9 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn ci_control_planted_failure() {
+    let len = quotebook_core::Quote::LEN;
+    assert_eq!(len, 209, "planted failure for the I1 CI control");
+}
