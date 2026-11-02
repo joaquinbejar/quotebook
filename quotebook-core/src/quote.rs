@@ -151,7 +151,7 @@ impl Quote {
         now: UnixTimestamp,
         max_quote_ttl: Seconds,
     ) -> Result<(), QuotebookError> {
-        let t = &self.0;
+        let t =   &self.0;
         if now >= t.expires_at {
             return Err(QuotebookError::QuoteExpired);
         }
