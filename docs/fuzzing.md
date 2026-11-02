@@ -126,6 +126,38 @@ Successful fills per (side, series): Bid on SPL 1,128; Ask on SPL 1,144; Bid on 
 Successful fills per (side, series): Bid on SPL 22,083; Ask on SPL 22,144; Bid on Token-2022
 21,983; Ask on Token-2022 21,920.
 
+The results above are from I6, with two fee-free series. The next section is the I10 model.
+
+### Results with fees and `withdraw_fees` (I10, 2026-11-02, Studio)
+
+24 cases (pre-push) take about 3 s in a debug build. 10,000 cases in a release build
+(`QUOTEBOOK_PROPTEST_CASES=10000 cargo test --release -p quotebook-program --test
+conservation`) **passed** in 108 s of test time: 314,300 steps, every one matching the model's
+prediction. The run was repeated on the program with the I10-02 fix (only an Ask forms
+`quote_atoms + fee`) with identical counts; the fixed seed makes the sequences the same.
+
+| Outcome | Count |
+| --- | ---: |
+| Success | 183,437 |
+| `NonceUsed` | 28,265 |
+| `FillSizeInvalid` | 18,222 |
+| `SeriesPaused` | 15,881 |
+| `WrongSeries` | 9,841 |
+| Precompile rejection | 9,824 |
+| `WrongTaker` | 9,177 |
+| `QuoteExpired` | 9,136 |
+| `InvalidInstructionData` (`withdraw_fees` of zero) | 8,725 |
+| `WatermarkNotIncreasing` | 8,063 |
+| `InvalidVaultOrTokenAccount` | 6,386 |
+| `InsufficientFees` | 3,197 |
+| `NonceCancelled` | 2,782 |
+| `NonceOutOfWindow` | 1,364 |
+
+Successful fills per (side, series), Bid then Ask: series 0 (SPL, no fee) 15,530 and 15,521;
+series 1 (SPL, 100 bps) 15,531 and 15,493; series 2 (Token-2022, `fee_bps` 0) 15,665 and
+15,404; series 3 (Token-2022, 37 bps) 15,644 and 15,666. 62,119 steps credited a fee account
+and 12,708 withdrew from one.
+
 ### Failing controls
 
 Each control was a temporary edit to `program/src/processor/settle.rs`, rebuilt and run at
@@ -136,6 +168,7 @@ Each control was a temporary edit to `program/src/processor/settle.rs`, rebuilt 
 | `amounts` off by one lot (`(fill + 1) × base_lot`) | step 2, the amount of a token account: 1,000,000,016,000 observed vs 1,000,000,015,000 modelled |
 | Nonce check disabled (`consume` removed) | step 2, the used count of the maker's window: 1 observed vs 2 modelled |
 | `settle` always rejects | step 0, the outcome: `Overflow` observed vs the predicted error |
+| I10: the fee rounded up instead of down (`quotebook-core/src/fee.rs`, `(product + 9,999) / 10,000`) | step 2, the amount of a token account of a fee fill: 999,999,935,352 modelled |
 
 ## 2. libFuzzer targets (`fuzz/`)
 
