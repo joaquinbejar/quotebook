@@ -18,6 +18,10 @@ mkdir -p target/verifiable
 git archive --format=tar "$rev" | docker run --rm -i --platform linux/amd64 "$image" sh -c '
   set -eu
   tar -xf - -C /work
+  # Checked again inside /work, where the archived rust-toolchain.toml would apply: the pins
+  # must hold there, not only where the image was built.
+  rustc --version | grep -qF "rustc 1.99.1" || { echo "host rustc is not 1.99.1 in /work" >&2; rustc --version >&2; exit 1; }
+  cargo build-sbf --version | grep -qF "platform-tools: v1.57" || { echo "platform-tools is not v1.57" >&2; exit 1; }
   cargo build-sbf --manifest-path program/Cargo.toml --arch v3 -- --locked > /tmp/build.log 2>&1 \
     || { cat /tmp/build.log >&2; exit 1; }
   cat target/deploy/quotebook_program.so

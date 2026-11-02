@@ -18,7 +18,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl bzip2 build-essential \
  && rm -rf /var/lib/apt/lists/*
 
-ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:/opt/agave/solana-release/bin:$PATH
+# RUSTUP_TOOLCHAIN overrides the repository's rust-toolchain.toml (`channel = "stable"`), so
+# the archived tree cannot switch the host toolchain away from the pin (Codex, I2 review).
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:/opt/agave/solana-release/bin:$PATH \
+    RUSTUP_TOOLCHAIN=$RUST_PIN RUSTUP_AUTO_INSTALL=0
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_PIN"
 
 RUN set -eu; base=https://github.com/anza-xyz; cd /tmp \
