@@ -426,6 +426,16 @@ impl World {
             .collect()
     }
 
+    /// Lamports of every account that must not pay or receive any: the watched program and
+    /// token accounts, and every signer other than the fee payer (makers, takers, admin).
+    fn other_lamports(&self) -> BTreeMap<Address, u64> {
+        let mut v = self.watched();
+        v.extend(self.makers.iter().map(Signer::pubkey));
+        v.extend(self.takers.iter().map(Signer::pubkey));
+        v.push(self.env.admin.pubkey());
+        v.into_iter().map(|a| (a, self.lamports(&a))).collect()
+    }
+
     fn lamports(&self, a: &Address) -> u64 {
         self.env.svm.get_account(a).map_or(0, |acc| acc.lamports)
     }
@@ -536,6 +546,7 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
     for (step, op) in ops.iter().enumerate() {
         let before = w.snapshot();
         let payer_before = w.lamports(&payer);
+        let others_before = w.other_lamports();
         let mut expected_tokens = w.tokens.clone();
         let mut next_nonces = w.nonces.clone();
         let mut next_fills = w.fills.clone();
@@ -707,6 +718,12 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
             payer_before - w.lamports(&payer),
             fee,
             "step {}: payer fee",
+            step
+        );
+        prop_assert_eq!(
+            &w.other_lamports(),
+            &others_before,
+            "step {}: lamports of an account other than the payer moved",
             step
         );
 

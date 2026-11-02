@@ -259,3 +259,132 @@ pub fn check_sigverify(data: &[u8]) -> Result<(), QuotebookError> {
     }
     got.map(|_| ())
 }
+
+// ---------------------------------------------------------------------------------------
+// quote_decode: structured inputs reach the accepting path and every later quote rule.
+
+/// A `quote_decode` input: raw bytes, or a valid encoding from arbitrary terms plus edits.
+#[derive(Debug, Arbitrary)]
+pub enum QuoteInput {
+    Raw(Vec<u8>),
+    Structured { terms: ArbTerms, edits: Vec<Edit> },
+}
+
+impl QuoteInput {
+    /// The bytes this input describes. Edits apply as on a precompile record, with the whole
+    /// buffer as the "message" (`MessageByte` and `Byte` both hit the quote).
+    pub fn bytes(&self) -> Vec<u8> {
+        match self {
+            QuoteInput::Raw(b) => b.clone(),
+            QuoteInput::Structured { terms, edits } => {
+                let mut d = terms.quote().encode().to_vec();
+                for e in edits {
+                    match e {
+                        // Count and Field edits (precompile-specific) become byte edits.
+                        Edit::Count(v) => apply(&mut d, 0, &Edit::Byte(160, *v)),
+                        Edit::Field(i, v) => {
+                            apply(&mut d, 0, &Edit::Byte(u16::from(*i), (*v & 0xff) as u8))
+                        }
+                        Edit::PubKey(_) => {}
+                        other => apply(&mut d, 0, other),
+                    }
+                }
+                d
+            }
+        }
+    }
+}
+
+/// The `quote_decode` oracle; panics on disagreement. Returns the outcome name for coverage.
+pub fn check_quote_decode(data: &[u8]) -> String {
+    let got = Quote::decode(data);
+    match (&got, reference_quote_error(data)) {
+        (Ok(q), None) => assert_eq!(&q.encode()[..], data, "decode must be canonical"),
+        (Err(g), Some(w)) => assert_eq!(*g, w, "error disagrees with the reference"),
+        (g, w) => panic!("core {g:?} but reference {w:?}"),
+    }
+    match got {
+        Ok(_) => "Ok".to_string(),
+        Err(e) => format!("{e:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// accounts_decode: structured inputs build valid layouts of all three account types.
+
+/// An `accounts_decode` input: raw bytes, or a layout with the right length and header for
+/// one of the three account types (body bytes arbitrary) plus edits.
+#[derive(Debug, Arbitrary)]
+pub enum AccountInput {
+    Raw(Vec<u8>),
+    Structured {
+        kind: u8,
+        bump: u8,
+        body: Vec<u8>,
+        edits: Vec<Edit>,
+    },
+}
+
+impl AccountInput {
+    pub fn bytes(&self) -> Vec<u8> {
+        use quotebook_core::accounts::{
+            AccountTag, Config, MakerState, ProgramAccount, Series, VERSION,
+        };
+        match self {
+            AccountInput::Raw(b) => b.clone(),
+            AccountInput::Structured {
+                kind,
+                bump,
+                body,
+                edits,
+            } => {
+                let (tag, len) = match kind % 3 {
+                    0 => (AccountTag::Config as u8, Config::LEN),
+                    1 => (AccountTag::Series as u8, Series::LEN),
+                    _ => (AccountTag::MakerState as u8, MakerState::LEN),
+                };
+                let mut d = vec![0u8; len];
+                d[0] = tag;
+                d[1] = VERSION;
+                d[2] = *bump;
+                for (i, b) in d.iter_mut().skip(8).enumerate() {
+                    if !body.is_empty() {
+                        *b = body[i % body.len()];
+                    }
+                }
+                for e in edits {
+                    apply(&mut d, 8, e);
+                }
+                d
+            }
+        }
+    }
+}
+
+/// The `accounts_decode` oracle for one type; panics on disagreement. Returns whether it
+/// accepted.
+fn check_account<T: quotebook_core::accounts::ProgramAccount + bytemuck::Pod>(data: &[u8]) -> bool {
+    use quotebook_core::accounts::{self, VERSION};
+    let ok = data.len() == T::LEN && data[0] == T::TAG as u8 && data[1] == VERSION;
+    let got = accounts::decode::<T>(data);
+    assert_eq!(got.is_some(), ok, "accepts exactly length, tag and version");
+    if let Some(v) = got {
+        assert_eq!(bytemuck::bytes_of(&v), data, "re-encodes to the same bytes");
+    }
+    got.is_some()
+}
+
+/// Runs the oracle for all three types. Returns the accepted type's name, or "None".
+pub fn check_accounts(data: &[u8]) -> &'static str {
+    use quotebook_core::accounts::{Config, MakerState, Series};
+    let c = check_account::<Config>(data);
+    let s = check_account::<Series>(data);
+    let m = check_account::<MakerState>(data);
+    match (c, s, m) {
+        (true, false, false) => "Config",
+        (false, true, false) => "Series",
+        (false, false, true) => "MakerState",
+        (false, false, false) => "None",
+        _ => panic!("one layout decoded as two account types"),
+    }
+}

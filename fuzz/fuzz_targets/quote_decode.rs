@@ -1,16 +1,11 @@
-//! `Quote::decode`: the reference predicts accept or the exact error, and accept implies the
-//! canonical round trip `encode(decode(x)) == x`.
+//! `Quote::decode`: a reference decode predicts accept or the exact error, and accept implies
+//! the canonical round trip `encode(decode(x)) == x`. Structured inputs start from a valid
+//! encoding, so the accepting path and every later quote rule are reached.
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use quotebook_core::Quote;
-use quotebook_fuzz::reference_quote_error;
+use quotebook_fuzz::{check_quote_decode, QuoteInput};
 
-fuzz_target!(|data: &[u8]| {
-    let got = Quote::decode(data);
-    match (got, reference_quote_error(data)) {
-        (Ok(q), None) => assert_eq!(&q.encode()[..], data),
-        (Err(g), Some(w)) => assert_eq!(g, w),
-        (g, w) => panic!("core {g:?} but reference {w:?}"),
-    }
+fuzz_target!(|input: QuoteInput| {
+    let _ = check_quote_decode(&input.bytes());
 });
