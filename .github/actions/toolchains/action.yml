@@ -1,0 +1,63 @@
+name: Pinned toolchains
+description: >
+  Installs the pinned host Rust, Agave CLI and platform-tools (versions and SHA-256 in the
+  workflow's env), verifies every archive, and fails unless each tool reports its pinned
+  version.
+runs:
+  using: composite
+  steps:
+    - name: Host Rust
+      shell: bash
+      run: |
+        rustup toolchain install "$RUST_PIN" --profile minimal --component rustfmt,clippy
+        echo "RUSTUP_TOOLCHAIN=$RUST_PIN" >> "$GITHUB_ENV"
+
+    - name: Cache Agave and platform-tools archives
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/sbf-archives
+        key: sbf-${{ env.AGAVE_VERSION }}-${{ env.AGAVE_SHA256 }}-${{ env.PLATFORM_TOOLS_VERSION }}-${{ env.PLATFORM_TOOLS_SHA256 }}
+
+    - name: Agave CLI and platform-tools
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p ~/sbf-archives
+        cd ~/sbf-archives
+        base=https://github.com/anza-xyz
+        [ -f agave.tar.bz2 ] || curl -fsSL -o agave.tar.bz2 \
+          "$base/agave/releases/download/$AGAVE_VERSION/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+        [ -f platform-tools.tar.bz2 ] || curl -fsSL -o platform-tools.tar.bz2 \
+          "$base/platform-tools/releases/download/$PLATFORM_TOOLS_VERSION/platform-tools-linux-x86_64.tar.bz2"
+        echo "$AGAVE_SHA256  agave.tar.bz2" | sha256sum -c -
+        echo "$PLATFORM_TOOLS_SHA256  platform-tools.tar.bz2" | sha256sum -c -
+        mkdir -p ~/agave && tar -xjf agave.tar.bz2 -C ~/agave
+        dest=~/.cache/solana/$PLATFORM_TOOLS_VERSION/platform-tools
+        mkdir -p "$dest" && tar -xjf platform-tools.tar.bz2 -C "$dest"
+        echo "$HOME/agave/solana-release/bin" >> "$GITHUB_PATH"
+
+    - name: Versions
+      shell: bash
+      run: |
+        set -euo pipefail
+        want() { printf '%s\n' "$2" | grep -qF -- "$3" || { echo "$1: want '$3', got: $2"; exit 1; }; }
+        sbf=$(cargo build-sbf --version 2>/dev/null)
+        echo "$sbf"
+        want cargo-build-sbf "$sbf" "cargo-build-sbf 4.5.0"
+        want platform-tools "$sbf" "platform-tools: v1.57"
+        want "SBF Rust" "$sbf" "Rust: 1.95.0"
+        want solana "$(solana --version)" "solana-cli 4.4.0"
+        want rustc "$(rustc --version)" "rustc $RUST_PIN"
+        hash=$(rustc -vV | sed -n 's/^commit-hash: //p' | cut -c1-10)
+        want rustfmt "$(rustfmt +"$RUST_PIN" --version)" "($hash"
+        want clippy "$(cargo clippy --version)" "($hash"
+
+    - name: Cache cargo registry and target
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          target
+        key: cargo-${{ github.job }}-${{ env.RUST_PIN }}-${{ env.AGAVE_VERSION }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}

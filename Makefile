@@ -8,10 +8,18 @@ all: fmt-check lint test
 # sBPF target version (cargo-build-sbf's default is v3).
 SBF_ARCH ?= v3
 
+# Host toolchain for the explicit `+toolchain` calls (rustfmt): `stable` locally, the exact
+# pin in CI (.github/workflows/ci.yml), where RUSTUP_TOOLCHAIN covers the plain `cargo` calls
+# but cannot override an explicit `+stable`.
+RUST_TOOLCHAIN ?= stable
+# Extra flags for every cargo command; CI sets `--locked`.
+CARGO_FLAGS ?=
+export CARGO_FLAGS
+
 # Build the workspace
 .PHONY: build
 build:
-	cargo build --workspace
+	cargo build $(CARGO_FLAGS) --workspace
 
 # Build the program (and with it the no_std core) for SBF into target/deploy.
 # cargo-build-sbf's exit status is kept (no pipe), and scripts/check-sbf-log.sh (shared with
@@ -20,7 +28,7 @@ build:
 .PHONY: program
 program:
 	@mkdir -p target
-	@cargo build-sbf --manifest-path program/Cargo.toml --arch $(SBF_ARCH) \
+	@cargo build-sbf --manifest-path program/Cargo.toml --arch $(SBF_ARCH) -- $(CARGO_FLAGS) \
 		> target/build-sbf.log 2>&1; status=$$?; cat target/build-sbf.log; \
 		if [ $$status -ne 0 ]; then echo "program: cargo-build-sbf failed ($$status)"; exit $$status; fi
 	@sh scripts/check-sbf-log.sh target/build-sbf.log
@@ -46,28 +54,28 @@ program-control:
 .PHONY: bench
 bench: program
 	QUOTEBOOK_BENCH_OUT=$(CURDIR)/docs/benchmarks.md \
-	cargo test -p quotebook-program --test cu -- --nocapture
+	cargo test $(CARGO_FLAGS) -p quotebook-program --test cu -- --nocapture
 
 # Run every test, including the LiteSVM program tests (which load target/deploy, so `make
 # program` runs first). QUOTEBOOK_PROPTEST_CASES=<n> overrides the property-test case count.
 .PHONY: test
 test: program
-	cargo test --workspace --all-features
+	cargo test $(CARGO_FLAGS) --workspace --all-features
 
 # Format the code
 .PHONY: fmt
 fmt:
-	cargo +stable fmt --all
+	cargo +$(RUST_TOOLCHAIN) fmt --all
 
 # Check formatting
 .PHONY: fmt-check
 fmt-check:
-	cargo +stable fmt --all --check
+	cargo +$(RUST_TOOLCHAIN) fmt --all --check
 
 # Clippy with every warning denied
 .PHONY: lint
 lint:
-	cargo clippy --workspace --all-targets --all-features -- -D warnings
+	cargo clippy $(CARGO_FLAGS) --workspace --all-targets --all-features -- -D warnings
 
 # Failing control: clippy must reject every banned macro in lint-control's library code, on
 # each probe line with the exact definition path (see lint-control/check.sh).
@@ -78,7 +86,7 @@ lint-control:
 # Rustdoc with every warning denied
 .PHONY: doc
 doc:
-	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
+	RUSTDOCFLAGS="-D warnings" cargo doc $(CARGO_FLAGS) --workspace --no-deps --all-features
 
 # Pre-push checks: must pass with zero warnings
 .PHONY: pre-push
