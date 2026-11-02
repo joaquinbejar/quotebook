@@ -2,7 +2,8 @@
 # `make pre-push` and `make bench` on pinned toolchains, so the committed docs/benchmarks.md is
 # reproduced exactly.
 #
-# The jobs' union is exactly `make pre-push`: `checks` (everything but `test`) and `test`.
+# The jobs' union is exactly `make pre-push`: `checks` (everything but `test` and `ts-check`),
+# `test` and `ts` (the TypeScript SDK, on the minimum and the current Node, pinned below).
 # `bench` regenerates the CU table and requires the committed one. `verifiable` rebuilds the
 # program in scripts/verifiable/Dockerfile and requires the hash recorded in
 # docs/verifiable-build.md. `fuzz-corpus` replays the committed libFuzzer corpus (fuzz/,
@@ -48,11 +49,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/toolchains
-      - name: pre-push without test
-        run: make $MAKE_PINS fmt-check lint lint-control program-control program doc
+      - name: pre-push without test and ts-check
+        run: make $MAKE_PINS fmt-check lint lint-control program-control program doc vectors-check
       - name: the CI jobs cover make pre-push
         run: |
-          want="fmt-check lint lint-control program-control program test doc"
+          want="fmt-check lint lint-control program-control program test doc vectors-check ts-check"
           got=$(sed -n 's/^pre-push: //p' Makefile)
           [ "$got" = "$want" ] || { echo "pre-push is '$got'; update this workflow's jobs"; exit 1; }
 
@@ -63,6 +64,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/toolchains
       - run: make $MAKE_PINS test
+
+  ts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The minimum of ts/package.json's `engines.node` (>=24), and the current release.
+        node: ["24.22.0", "26.13.0"]
+    name: ts (node ${{ matrix.node }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - run: mkdir -p target && make ts-check
 
   bench:
     runs-on: ubuntu-latest

@@ -1,0 +1,24 @@
+{
+  "name": "@quotebook/sdk",
+  "version": "0.1.1",
+  "description": "TypeScript SDK for quotebook, request-for-quote trading on Solana: quotes, the ed25519 precompile, settle, PDAs, account and fill-event decoders",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'test/*.test.ts'",
+    "emit-settle": "node scripts/emit-settle.ts"
+  },
+  "dependencies": {
+    "@solana/kit": "8.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2"
+  }
+}
