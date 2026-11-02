@@ -1,6 +1,6 @@
 # quotebook: improvement plan
 
-Status: **draft r2, for Codex review**. GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
+Status: **draft r3, for Codex review**. GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
 Baseline: `main` at `4b3751f` (v0.1.1 on crates.io; program `3Aq1Aw…6mbo` on devnet, built
 from `898c173`). `docs/PLAN.md` stays the v1 design record; this file plans the work after v1.
 
@@ -68,8 +68,19 @@ Copy optfix's workflow and composite action, adapted to quotebook's `make pre-pu
   first and shard only if `test` takes more than 20 minutes.
 - **Guard step:** optfix's "the CI jobs cover make pre-push" step, so the workflow fails when
   `pre-push` changes and the jobs do not.
-- **Done when:** CI is green on the PR, and a deliberate formatting error pushed to a
-  throwaway branch fails it (failing control, run once and recorded in the PR).
+- **Merge gate:** branch protection on `main` requires the `checks`, `test` and `bench` jobs
+  (and the `ts` job once I8 adds it). Evidence: the `gh api
+  repos/joaquinbejar/quotebook/branches/main/protection` output after the change, in the PR.
+- **Failing controls:** one scratch PR per job, each planting a single fault, each closed
+  unmerged:
+  - a formatting error fails `checks` only;
+  - a failing test fails `test` only;
+  - an edited row in `docs/benchmarks.md` fails `bench` only.
+  The PR records the three run links and which jobs failed in each.
+- **Done when:**
+  - CI is green on the PR;
+  - the three controls failed exactly their intended job;
+  - `main` requires the jobs.
 
 ### I2. Verifiable build (M)
 
@@ -181,9 +192,20 @@ Two layers. The fast one runs in `make pre-push`; the slow one runs on demand.
 - **libFuzzer targets on core** (`fuzz/`, outside the workspace):
   - targets: `sigverify::verified_quote` on arbitrary precompile data, `Quote::decode` on
     arbitrary 208-byte inputs, and the instruction decoders (`SettleArgs` and the rest).
-  - Oracle for sigverify: any accepted input has exactly one signature, every offset index
-    is `0xFFFF`, and the returned quote re-encodes to the bytes at the message offset.
-    Decoders: accept implies `encode(decode(x)) == x`.
+  - Oracle for sigverify: an independent reference parser written in the fuzz target
+    (`quotebook-core/src/sigverify.rs:112-143` is the code under test). It predicts accept
+    or the exact error, and the target asserts equality:
+    - count byte 1;
+    - every instruction index `0xFFFF`;
+    - `message_data_size == 208`;
+    - the signature, public key and message ranges inside the data;
+    - `Quote::decode` of the message;
+    - public key == `quote.maker`.
+    On accept, the returned quote also re-encodes to the bytes at the message offset.
+    Structured inputs are generated from a valid record with mutated fields, so that every
+    rejection branch is reached, not only the first length check; coverage of each error
+    variant is reported.
+  - Decoders: accept implies `encode(decode(x)) == x`.
   - **Rule exception:** `cargo-fuzz` needs nightly. It is pinned to `nightly-2026-10-11` in
     `fuzz/rust-toolchain.toml`, and the workspace stays on stable.
   - The corpus and any crash reproducers are committed. A crash becomes a stable regression
@@ -195,20 +217,35 @@ Two layers. The fast one runs in `make pre-push`; the slow one runs on demand.
     `cancel_nonce` and `set_series_paused` across 2 makers, 2 takers and 2 series.
   - Each sequence is a mix of valid quotes and mutated ones: a flipped byte, a wrong series,
     an expired quote, a replayed nonce, an over-size fill, a swapped account.
-  - After every step it checks, against a pure Rust model:
-    - conservation: the total of each mint across all accounts is constant;
+  - Outcomes are predicted, not just observed. A pure Rust model gets the step before it
+    runs and predicts its outcome:
+    - success, or the exact error code where the error is stable;
+    - mutations that can only be rejected predict "rejected" plus the error set they may
+      hit.
+    The test asserts that the observed outcome equals the prediction. A regression that
+    rejects every valid `settle` therefore fails at once.
+  - Generation guarantees successful fills: every sequence carries at least one valid fill
+    per side and token program. The run reports how many fills succeeded and fails if any
+    (side, program) pair had none.
+  - After every step it checks, against the model:
+    - conservation: the total of each mint across all token accounts is constant;
     - each successful fill moves `fill × base_lot` and `price × fill × quote_lot`;
     - delegate allowances drop by exactly the maker's outflow;
     - a nonce fills at most once;
-    - `fills` equals the number of successful settles;
-    - every rejected transaction leaves every account byte-identical.
+    - `fills` equals the model's count of successful settles;
+    - a rejected transaction leaves the program and token accounts byte-identical.
+      Lamports of the fee payer are excluded: a rejected transaction still pays its
+      signature fee, and the model charges that fee to the payer explicitly.
   - The case count is set by `QUOTEBOOK_PROPTEST_CASES`, low in pre-push and high in
     `make fuzz-long`.
 - **Done when:**
   - each libFuzzer target has run 1 hour with no crash, recorded in the PR;
   - the property test passes 10,000 cases;
-  - a deliberately broken `amounts` (off by one lot) and a disabled nonce check are each
-    caught, as failing controls run once and recorded.
+  - each of these failing controls, run once and recorded, is caught:
+    - a deliberately broken `amounts` (off by one lot);
+    - a disabled nonce check;
+    - a `settle` that always rejects;
+    - a reference sigverify parser that skips the maker binding.
 
 ## Phase 2: features
 
@@ -228,12 +265,34 @@ Two layers. The fast one runs in `make pre-push`; the slow one runs on demand.
   - `quotebook-sdk::decode::fill_event` parses it from the transaction's log lines
     (`Program data: <base64>`).
   - The new `settle` CU goes in `make bench`.
-- **Known limit, documented:** logs can be truncated (10 KB per transaction) or dropped by
-  RPC nodes. Indexers must treat the event as a hint and `MakerState.fills` plus the token
-  balances as truth. A self-CPI event (as in Anchor's `emit_cpi`) is more robust, but it
-  costs a CPI and a PDA. It was rejected for now, and the PR records the CU of both.
-- **Done when:** LiteSVM tests decode the event for both sides and both token programs, and
-  no event is emitted on any failed `settle`.
+- **Provenance:** the raw payload decoder alone cannot tell a real event from a fake one.
+  - Any program can log `Program data:` with the same tag.
+  - A successful `settle` followed by a failing later instruction leaves the event in the
+    logs, although the whole transaction rolled back.
+  So `quotebook-sdk` has two layers:
+  - `decode::fill_event_payload(bytes)`: context-free;
+  - `events::fill_events(tx)`: what indexers use. It takes a confirmed transaction with its
+    status and logs, and returns events only when all of these hold:
+    - the transaction succeeded, with no error in its meta;
+    - the commitment is `finalized` (or the level the caller asks for);
+    - the record sits inside a `Program 3Aq1Aw… invoke [1]` … `success` frame of this
+      program's id, tracked through the invoke and return lines.
+    Each event's identity is (signature, index of the event within the transaction), so it
+    can be deduplicated.
+- **Known limit, documented:**
+  - logs can be truncated (10 KB per transaction) or dropped by RPC nodes;
+  - so events are hints, not a complete trade history;
+  - `MakerState.fills` and token balances show that fills happened, but cannot reconstruct
+    a lost fill or its price: the signature and its instructions do.
+  A self-CPI event (as in Anchor's `emit_cpi`) is more robust, but it costs a CPI and a PDA.
+  It is rejected for now, and the PR records the CU of both.
+- **Done when:** LiteSVM tests show all of these:
+  - the event decodes for both sides and both token programs;
+  - there is no event on any failed `settle`;
+  - a spoofed emitter (a test program logging the same bytes) is rejected by
+    `fill_events`;
+  - a transaction of `settle` followed by a failing instruction yields no event from
+    `fill_events`.
 
 ### I8. TypeScript SDK checked against Rust vectors (M)
 
@@ -318,8 +377,9 @@ Codex and SOLANA-PROJECTS before any code.
   - It is set by `create_series` and never changed: there is no instruction that writes it.
   - It is capped at `MAX_FEE_BPS = 100`, and devnet series default to 0 (both agreed by
     SOLANA-PROJECTS, msg 43378, as is the taker-paid fee).
-  - Existing series read 0, so they need no migration and their CU is unchanged. The account
-    `VERSION` stays 1.
+  - Existing series read 0, so they need no migration, and the account `VERSION` stays 1.
+    With fee 0 there is no third transfer, but that does not prove the CU is unchanged: the
+    compiled code changes. The new CU is measured, not assumed.
 - **Why immutable:** a quote binds its series address, so an immutable fee means the signed
   quote fully determines what every party pays. A mutable fee would let the admin change a
   taker's cost after the maker signed.
@@ -334,8 +394,23 @@ Codex and SOLANA-PROJECTS before any code.
   an optional account 13 when `fee_bps > 0`.
 - **Withdrawals:** the new `withdraw_fees(amount)` (tag 8, admin) moves fees out, signed by
   the Config PDA's seeds.
-- **Cost:** about one more `transfer_checked`, measured in `make bench`.
-- **Tests:** I6's conservation property test extends to the fee account.
+- **Validation:** checked arithmetic on every amount and on `quote_atoms - fee`. When
+  `fee_bps > 0`, the fee account must be:
+  - of `series.quote_mint`;
+  - under the quote mint's token program;
+  - owned by the Config PDA, with the PDA re-derived;
+  - free of any account extension outside the existing allowlist.
+- **Cost:** `make bench` gets measured rows for fee 0 and fee > 0, on SPL Token and on
+  Token-2022, both sides, plus `withdraw_fees`.
+- **Tests:**
+  - I6's conservation property test extends to the fee account.
+  - `withdraw_fees` has negative tests:
+    - signer not the admin;
+    - wrong Config PDA;
+    - a source account not owned by the Config PDA;
+    - the wrong mint;
+    - an amount above the balance;
+    - a zero amount.
 
 **Maker registry: recommended design.**
 
