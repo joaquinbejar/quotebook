@@ -104,13 +104,14 @@ impl MarketInfo {
     /// decimals do not overflow the intermediates (Codex, I12):
     /// 1. `gcd(quote_lot, base_lot)` is divided out;
     /// 2. the reduced base lot's factors of 10 move into the exponent;
-    /// 3. `ticks × quote_lot'` is an exact `u128`, stripped of trailing zeros if it needs to
-    ///    fit `Decimal`'s 96 bits;
+    /// 3. `ticks × quote_lot'` is an exact `u128`. If it is wider than `Decimal`'s 96 bits, its
+    ///    last digits move into the exponent, rounding toward zero, with a relative error below
+    ///    1e-28;
     /// 4. one division by the remaining base lot is left, done before scaling up and after
     ///    scaling down, so no intermediate exceeds the result.
     ///
-    /// The result is exact when that last quotient terminates within 28 digits, and rounded
-    /// to them otherwise.
+    /// The result is exact when the numerator fits 96 bits and the last quotient terminates
+    /// within 28 digits, and correct to Decimal's precision otherwise.
     ///
     /// Returns `None` for a zero lot size or a price `Decimal` cannot hold.
     #[must_use]
@@ -128,14 +129,13 @@ impl MarketInfo {
             exp = exp.checked_sub(1)?;
         }
         let mut num = u128::from(ticks.get()).checked_mul(u128::from(q))?;
-        // Decimal's mantissa is 96 bits: move trailing zeros into the exponent until it fits.
+        // Decimal's mantissa is 96 bits (about 28.9 digits). A wider numerator is cut to fit by
+        // dropping its last digits into the exponent, rounding toward zero: the relative error
+        // is below 1e-28, finer than Decimal's own precision. The denominator then reduces it.
         const MANTISSA_MAX: u128 = (1u128 << 96) - 1;
-        while num > MANTISSA_MAX && num.checked_rem(10)? == 0 {
+        while num > MANTISSA_MAX {
             num = num.checked_div(10)?;
             exp = exp.checked_add(1)?;
-        }
-        if num > MANTISSA_MAX {
-            return None;
         }
         let num = i128::try_from(num).ok()?;
         let ten = Decimal::TEN;

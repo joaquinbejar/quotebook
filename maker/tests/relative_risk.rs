@@ -322,8 +322,9 @@ proptest! {
         base_decimals in 0u8..=18,
         quote_decimals in 0u8..=18,
         base_mult in 1u64..=1_000,
-        quote_lot in 1u64..=1_000_000_000_000,
-        ticks in 1u64..=1_000_000_000_000_000,
+        // Full u64 ranges, so ticks × quote_lot exceeds 96 bits and reaches the wide path.
+        quote_lot in prop_oneof![1u64..=1_000_000_000_000, any::<u64>().prop_map(|v| v.max(1))],
+        ticks in prop_oneof![1u64..=1_000_000_000_000_000, any::<u64>().prop_map(|v| v.max(1))],
     ) {
         let m = MarketInfo {
             base_decimals,
@@ -334,14 +335,14 @@ proptest! {
         };
         let t = quotebook_core::QuoteLotsPerBaseLot::new(ticks);
         let Some(price) = m.ticks_to_price(t) else {
-            // Only a price beyond Decimal's range (about 7.9e28) may be refused. Integer
-            // magnitude: price >= 10^lower, with lower from the digit counts.
-            let lower = i64::from(ticks.ilog10()) + i64::from(quote_lot.ilog10())
+            // Only a price that may exceed Decimal's range (about 7.92e28) may be refused.
+            // Integer upper bound: price < 10^upper, from the digit counts. A refusal with
+            // upper <= 28 (price < 1e28) is wrong.
+            let upper = i64::from(ticks.ilog10()) + 1 + i64::from(quote_lot.ilog10()) + 1
                 + i64::from(base_decimals)
                 - i64::from(m.base_lot_size.ilog10())
-                - 1
                 - i64::from(quote_decimals);
-            prop_assert!(lower >= 27, "refused a representable price (10^{lower} or more)");
+            prop_assert!(upper > 28, "refused a price below 10^{upper}");
             return Ok(());
         };
         let down = m.price_to_ticks(price, Rounding::Down);
@@ -351,4 +352,26 @@ proptest! {
             prop_assert!(up.get() - down.get() <= 1);
         }
     }
+}
+
+/// Codex's wide-numerator probe: `ticks × quote_lot` exceeds 96 bits with no trailing zero,
+/// gcd 1, and the price is about 1e12.
+#[test]
+fn test_wide_numerator_is_reduced_not_refused() {
+    let m = MarketInfo {
+        base_decimals: 18,
+        quote_decimals: 18,
+        base_lot_size: 1_000_000_000_000_000_000,
+        quote_lot_size: 1_000_000_000_039,
+        ..market(6, 6, 1)
+    };
+    let ticks = quotebook_core::QuoteLotsPerBaseLot::new(1_000_000_000_000_000_001);
+    let price = m.ticks_to_price(ticks).expect("representable");
+    assert!(
+        price > d("1000000000038") && price < d("1000000000040"),
+        "{price}"
+    );
+    let down = m.price_to_ticks(price, Rounding::Down).unwrap();
+    let up = m.price_to_ticks(price, Rounding::Up).unwrap();
+    assert!(down <= ticks && ticks <= up && up.get() - down.get() <= 1);
 }
