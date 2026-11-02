@@ -3,7 +3,9 @@
 # reproduced exactly.
 #
 # The jobs' union is exactly `make pre-push`: `checks` (everything but `test`) and `test`.
-# `bench` regenerates the CU table and requires the committed one. There is no branch
+# `bench` regenerates the CU table and requires the committed one. `verifiable` rebuilds the
+# program in scripts/verifiable/Dockerfile and requires the hash recorded in
+# docs/verifiable-build.md. There is no branch
 # protection on quotebook (required CI on main is for optfix only); a PR is merged only when
 # every job is green, as a process rule.
 #
@@ -68,3 +70,11 @@ jobs:
       - run: make $MAKE_PINS bench
       - name: docs/benchmarks.md is the committed one
         run: git diff --exit-code docs/benchmarks.md
+
+  verifiable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: reproducible build hashes to docs/verifiable-build.md
+        run: make verifiable-check
