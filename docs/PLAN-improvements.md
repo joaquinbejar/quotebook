@@ -1,6 +1,6 @@
 # quotebook: improvement plan
 
-Status: **draft r5, for Codex review**. GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
+Status: **draft r6, for Codex review**. GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
 Baseline: `main` at `4b3751f` (v0.1.1 on crates.io; program `3Aq1Aw…6mbo` on devnet, built
 from `898c173`). `docs/PLAN.md` stays the v1 design record; this file plans the work after v1.
 
@@ -68,9 +68,10 @@ Copy optfix's workflow and composite action, adapted to quotebook's `make pre-pu
   first and shard only if `test` takes more than 20 minutes.
 - **Guard step:** optfix's "the CI jobs cover make pre-push" step, so the workflow fails when
   `pre-push` changes and the jobs do not.
-- **Merge gate:** branch protection on `main` requires the `checks`, `test` and `bench` jobs
-  (and the `ts` job once I8 adds it). Evidence: the `gh api
-  repos/joaquinbejar/quotebook/branches/main/protection` output after the change, in the PR.
+- **Merge gate, as a process rule:** no branch protection on quotebook. Required CI on
+  `main` is for optfix only (the user's decision, relayed by SOLANA-PROJECTS in msg 43728).
+  Every PR runs CI and is merged only when `checks`, `test` and `bench` (and `ts` after I8)
+  are green. The merge comment links the green run.
 - **Failing controls:** one scratch PR per job, each planting a single fault, each closed
   unmerged:
   - a formatting error fails `checks` only;
@@ -79,8 +80,7 @@ Copy optfix's workflow and composite action, adapted to quotebook's `make pre-pu
   The PR records the three run links and which jobs failed in each.
 - **Done when:**
   - CI is green on the PR;
-  - the three controls failed exactly their intended job;
-  - `main` requires the jobs.
+  - the three controls failed exactly their intended job.
 
 ### I2. Verifiable build (M)
 
