@@ -466,6 +466,97 @@ I5's audit commit is frozen at that point.
 - **Before publishing:** publishing is irreversible. I read the inbox immediately before
   `cargo publish`, and it needs an explicit GO from SOLANA-PROJECTS at that moment.
 
+### I12. Maker risk parameters relative to the mid (S)
+
+Added after I9 (SOLANA-PROJECTS, msg 44092).
+
+**Finding:** the maker service's Avellaneda-Stoikov parameters are absolute. Its spread term
+`(2/γ) ln(1 + γ/k)` is in price units, and the defaults (`--risk-aversion 0.1`,
+`--order-intensity 1.5`) were tuned for prices near 25. At the I9 mid of 1.20 USDC they put
+the quote 54% away from the mid, so the maker's own 5% deviation guard rejected every
+request. At a mid of 3,000 the same defaults would give a spread of about 0.04%, far too
+tight.
+
+**Change:**
+- **Spread:** the half-spread and the inventory skew are expressed in basis points of the
+  mid:
+  - `min_half_spread_bps` (floor) and `max_half_spread_bps` (cap);
+  - `max_skew_bps`, the cap on how far inventory may move the reservation price from the mid.
+  The service derives the model's price-unit parameters from the mid at each quote, so one
+  set of defaults works at any price level.
+- **Precedence**, in order:
+  1. the model computes a reservation price and a half-spread, from the defaults or from
+     the absolute advanced overrides (the existing flags, documented as absolute);
+  2. the skew is clamped to `max_skew_bps` and the half-spread to
+     `[min_half_spread_bps, max_half_spread_bps]`. The clamps always apply, overrides
+     included;
+  3. the prices are rounded to the tick, the bid down and the ask up, with exact integer
+     math, toward the maker;
+  4. the deviation guard (5% of the mid by default) checks the rounded prices last. A failed
+     guard is a refusal, never a silent re-price.
+- **Infeasible quotes are typed refusals.** When no rounded pair passes every rule, the
+  service refuses with an error that names the cause:
+  - `TickTooCoarse`: the tick makes either side deviate beyond the guard, for example mid
+    0.01 with a 0.01 tick;
+  - `NonPositiveBid`: the rounded bid is 0 or below;
+  - `Crossed`: rounding left the bid at or above the ask.
+  The taker sees an error instead of a bad price.
+
+**Units:**
+- `guard` is a fraction: 0.05 means 5% of the mid.
+- The `*_bps` parameters are basis points: 1 bp = 0.0001 of the mid.
+- Every inequality below converts bps to a fraction with `/ 10,000`.
+
+**Startup checks** (each failure is a startup error, never a silent fallback):
+- `0 < min_half_spread_bps ≤ max_half_spread_bps`;
+- `0 < guard < 2/3`;
+- `(max_half_spread_bps + max_skew_bps) / 10,000 ≤ guard / 2`.
+
+**Domain:** with those checks, `tick ≤ mid × guard / 2` is a **sufficient** condition. Each
+rounded side then deviates from the mid by at most `guard / 2 + tick / mid ≤ guard`, and the
+bid is positive. It is not a necessary condition: outside it a valid rounded pair can still
+exist.
+
+The policy outside the domain is to compute, then judge. The service computes the rounded
+pair as usual and runs every check on it:
+- it quotes when the pair passes;
+- otherwise it refuses with the first rule that failed:
+  - `TickTooCoarse` when a side's deviation exceeds the guard;
+  - `NonPositiveBid` when the rounded bid is 0 or below;
+  - `Crossed` when rounding left `bid ≥ ask`.
+There is no blanket refusal outside the domain.
+
+**Ordering:**
+- At zero inventory: `bid < mid < ask`.
+- At any inventory:
+  - `bid < ask`;
+  - `bid < reservation < ask`;
+  - `|reservation - mid| ≤ max_skew_bps` of the mid;
+  - both prices within the guard of the mid.
+  With inventory, the mid may fall outside `[bid, ask]` by at most the skew cap. That is
+  what skew is for.
+
+**Tests:**
+- At mid 1.20 (tick 0.01) and at mid 3,000 (tick 0.01), the default quote at zero inventory
+  satisfies all of these:
+  - before rounding, the clamped half-spread lies within
+    `[min_half_spread_bps, max_half_spread_bps] / 10,000 × mid`;
+  - after rounding, each side's distance from the mid is at most
+    `max_half_spread_bps / 10,000 + tick / mid` of the mid, because rounding adds up to one
+    tick;
+  - the guard holds exactly on the rounded prices;
+  - `bid < mid < ask`.
+- A property test over (mid, tick, inventory), with mid from 0.01 to 1,000,000 and tick from
+  1e-6 to 1:
+  - inside the domain, a quote always exists and satisfies the ordering rules for its
+    inventory;
+  - outside it, either a quote that satisfies every rule, or a refusal whose variant matches
+    an independent recomputation of the first failed rule. A refusal is never issued for a
+    pair that would pass.
+- Startup checks: each violated inequality fails startup with its own error.
+- Overrides: absolute flags that would breach a bps clamp are clamped (tested at both caps).
+- Regression: the I9 failure (absolute defaults at mid 1.20) now yields a valid quote.
+
 ## Later (L, design only for now)
 
 ### L1. v2 package quotes
@@ -514,6 +605,7 @@ I5's audit commit is frozen at that point.
 | I9 | metalbook RFQ demo (before 2026-11-13 21:00Z) | S | I1; metalbook accounts ready |
 | I10 | Fee and registry ADRs, then code, then devnet upgrade | S + M | I6, I7 |
 | I11 | Release 0.2.0 | S | I10, GO |
+| I12 | Maker risk parameters relative to the mid | S | I9 finding |
 | L1 | v2 package quotes design | L (design only) | I10 |
 
 ## Questions answered by SOLANA-PROJECTS (msg 43378)
