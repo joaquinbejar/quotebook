@@ -280,3 +280,75 @@ fn test_model_units_against_the_direct_model_call() {
         clamped_prices(mid, inventory, &rel).unwrap().half_spread
     );
 }
+
+/// Codex's I12 probe: 18-decimal mints with large lots. The exact tick conversion succeeds,
+/// and the pipeline must too (the old reconstruction overflowed its intermediates).
+#[test]
+fn test_large_lots_and_decimals_do_not_overflow() {
+    let m = MarketInfo {
+        base_decimals: 18,
+        quote_decimals: 18,
+        base_lot_size: 1_000_000_000_000_000_000,
+        quote_lot_size: 1_000_000_000,
+        ..market(6, 6, 1)
+    };
+    assert_eq!(tick(&m), d("0.000000001"));
+    let q = pricing::quote(
+        d("3000"),
+        Decimal::ZERO,
+        &PricingParams::relative_defaults(),
+        &m,
+    )
+    .unwrap();
+    assert_eq!(
+        (q.bid_ticks.get(), q.ask_ticks.get()),
+        (2_980_638_382_014, 3_019_361_617_986)
+    );
+    assert_ordering(
+        &q,
+        d("3000"),
+        Decimal::ZERO,
+        &PricingParams::relative_defaults(),
+    );
+}
+
+proptest! {
+    #![proptest_config(config())]
+
+    /// `ticks_to_price` against `price_to_ticks` across asymmetric decimals and large lots:
+    /// rounding the reconstructed price back down and up brackets the ticks within one.
+    #[test]
+    fn test_ticks_to_price_round_trips(
+        base_decimals in 0u8..=18,
+        quote_decimals in 0u8..=18,
+        base_mult in 1u64..=1_000,
+        quote_lot in 1u64..=1_000_000_000_000,
+        ticks in 1u64..=1_000_000_000_000_000,
+    ) {
+        let m = MarketInfo {
+            base_decimals,
+            quote_decimals,
+            base_lot_size: 10u64.pow(u32::from(base_decimals.min(15))) * base_mult,
+            quote_lot_size: quote_lot,
+            ..market(6, 6, 1)
+        };
+        let t = quotebook_core::QuoteLotsPerBaseLot::new(ticks);
+        let Some(price) = m.ticks_to_price(t) else {
+            // Only a price beyond Decimal's range (about 7.9e28) may be refused. Integer
+            // magnitude: price >= 10^lower, with lower from the digit counts.
+            let lower = i64::from(ticks.ilog10()) + i64::from(quote_lot.ilog10())
+                + i64::from(base_decimals)
+                - i64::from(m.base_lot_size.ilog10())
+                - 1
+                - i64::from(quote_decimals);
+            prop_assert!(lower >= 27, "refused a representable price (10^{lower} or more)");
+            return Ok(());
+        };
+        let down = m.price_to_ticks(price, Rounding::Down);
+        let up = m.price_to_ticks(price, Rounding::Up);
+        if let (Ok(down), Ok(up)) = (down, up) {
+            prop_assert!(down.get() <= ticks && ticks <= up.get(), "{} {} {}", down.get(), ticks, up.get());
+            prop_assert!(up.get() - down.get() <= 1);
+        }
+    }
+}
