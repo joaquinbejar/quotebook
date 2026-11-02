@@ -132,6 +132,10 @@ fn test_settle_then_failing_instruction_yields_no_event() {
     // Tag 0xff is not a probe instruction: it fails after settle succeeded.
     let fail = Instruction::new_with_bytes(PROBE, &[0xff], vec![]);
     let failed = m.send_as_taker(&[pre, settle, fail]).unwrap_err();
+    println!(
+        "settle then failing instruction logs:\n{}",
+        failed.meta.pretty_logs()
+    );
     // The event line is in the logs, although the transaction rolled back...
     assert!(failed
         .meta
@@ -154,6 +158,7 @@ fn test_spoofed_emitter_is_rejected() {
     data.extend_from_slice(&fake.encode());
     let spoof = Instruction::new_with_bytes(PROBE, &data, vec![]);
     let meta = m.env.send(&[spoof], &[]).unwrap();
+    println!("spoofed emitter logs:\n{}", meta.pretty_logs());
     // The bytes decode as a fill event, but the probe logged them, not quotebook.
     let line = meta
         .logs
@@ -178,6 +183,10 @@ fn settle_by_cpi(log_after: bool) {
     accounts.extend(settle.accounts.iter().cloned());
     let probe = Instruction::new_with_bytes(PROBE, &data, accounts);
     let meta = m.send_as_taker(&[pre, probe]).unwrap();
+    println!(
+        "settle by CPI (log_after {log_after}) logs:\n{}",
+        meta.pretty_logs()
+    );
     assert!(
         meta.logs
             .iter()
@@ -210,6 +219,10 @@ fn test_probe_logging_the_same_bytes_after_the_cpi_is_rejected() {
     spoof_data.extend_from_slice(&expected(&m, &terms, 5).encode());
     let spoof = Instruction::new_with_bytes(PROBE, &spoof_data, vec![]);
     let meta = m.send_as_taker(&[pre, settle, spoof]).unwrap();
+    println!(
+        "settle plus spoof in one transaction logs:\n{}",
+        meta.pretty_logs()
+    );
     let data_lines = meta
         .logs
         .iter()
