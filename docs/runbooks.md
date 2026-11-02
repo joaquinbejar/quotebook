@@ -95,10 +95,18 @@ target/release/quotebook-maker $QB --series <SERIES> --maker <MAKER_KEYPAIR> \
   `cold start over; quoting`;
 - a `quotebook-taker quote` before that time fails with `RateLimited`.
 
-**Pricing parameters are absolute** until I12 lands. `--risk-aversion` and `--order-intensity`
-are in price units: the defaults suit prices near 25. At a 1.20 mid they produced a 54%
-deviation, which the maker's own guard rejected (`devnet.md`, I9). Tune them to the price level
-(the I9 demo used `--volatility 0.3 --order-intensity 40`).
+**Pricing is relative to the mid** (I12):
+- The model runs on the mid normalized to 100, and its prices are scaled back.
+- `--min-half-spread-bps` / `--max-half-spread-bps` (default 5 / 100) bound the half-spread,
+  and `--max-skew-bps` (default 100) bounds the inventory skew.
+- The deviation guard (`--max-deviation`, default 5%) checks the **rounded** prices.
+
+So the defaults fit any price level: about 0.65% each side.
+
+A configuration that cannot respect the guard fails at startup: it needs
+`(max-half-spread + max-skew) / 10000 <= max-deviation / 2`. A mid too small for the tick is
+refused per request, with `NonPositiveBid`, `Crossed` or `TickTooCoarse`. Before I12 the model
+was absolute: at the I9 mid of 1.20 its defaults gave a 54% deviation (`devnet.md`, I9).
 
 ## 4. RPC key rotation
 

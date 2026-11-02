@@ -95,6 +95,28 @@ impl MarketInfo {
     }
 }
 
+impl MarketInfo {
+    /// The price `ticks` stand for, in quote tokens per base token:
+    /// `ticks × quote_lot_size × 10^base_decimals / (base_lot_size × 10^quote_decimals)`.
+    /// Exact when the quotient terminates within `Decimal`'s 28 digits, else rounded to them.
+    /// Used to judge a rounded price against the mid.
+    ///
+    /// Returns `None` on overflow or a zero lot size.
+    #[must_use]
+    pub fn ticks_to_price(&self, ticks: QuoteLotsPerBaseLot) -> Option<Decimal> {
+        let ten = Decimal::TEN;
+        let mut num = Decimal::from(ticks.get()).checked_mul(Decimal::from(self.quote_lot_size))?;
+        for _ in 0..self.base_decimals {
+            num = num.checked_mul(ten)?;
+        }
+        let mut den = Decimal::from(self.base_lot_size);
+        for _ in 0..self.quote_decimals {
+            den = den.checked_mul(ten)?;
+        }
+        num.checked_div(den)
+    }
+}
+
 /// An unsigned 256-bit integer, four little-endian 64-bit limbs; only what
 /// [`MarketInfo::price_to_ticks`] needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

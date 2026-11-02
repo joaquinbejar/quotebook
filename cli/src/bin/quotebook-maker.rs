@@ -5,8 +5,15 @@
 //!   --maker-base <TOKEN_ACCOUNT> --maker-quote <TOKEN_ACCOUNT> --listen <HOST:PORT>
 //!   --mid <PRICE> [--ttl 30] [--max-size 1000] [--risk-aversion 0.1] [--volatility 0.6]
 //!   [--horizon-ms 3600000] [--order-intensity 1.5] [--max-deviation 0.05]
+//!   [--min-half-spread-bps 5] [--max-half-spread-bps 100] [--max-skew-bps 100]
 //!   [--max-ttl-any-series <SECONDS>]
 //! ```
+//!
+//! The spread is bounded in basis points of the mid (`--min/--max-half-spread-bps`, and the
+//! inventory skew by `--max-skew-bps`), so the defaults fit any price level. The model flags
+//! (`--risk-aversion`, `--volatility`, `--order-intensity`) are absolute advanced overrides;
+//! the bps bounds apply to them too. Startup fails unless `0 < min <= max half-spread`,
+//! `0 < max-deviation < 2/3` and `(max-half-spread + max-skew) / 10000 <= max-deviation / 2`.
 //!
 //! Every start resumes fail-closed: no quotes for `max_ttl_any_series + 10 s` (70 s at 60 s),
 //! then a refresh from chain. The key is read from the file and never logged.
@@ -45,6 +52,9 @@ fn run() -> Result<(), CliError> {
             time_to_terminal_ms: args.parse_or("horizon-ms", 3_600_000u64)?,
             order_intensity: decimal(&args, "order-intensity", "1.5")?,
             max_deviation: decimal(&args, "max-deviation", "0.05")?,
+            min_half_spread_bps: args.parse_or("min-half-spread-bps", 5u32)?,
+            max_half_spread_bps: args.parse_or("max-half-spread-bps", 100u32)?,
+            max_skew_bps: args.parse_or("max-skew-bps", 100u32)?,
         },
         ttl,
         max_size: BaseLots::new(args.parse_or("max-size", 1_000u64)?),

@@ -13,8 +13,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::issuer::{IssueError, NonceIssuer};
 use crate::keys::MakerKey;
-use crate::market::{MarketInfo, Rounding};
-use crate::pricing::{check_bounds, quote_prices, PricingParams};
+use crate::market::MarketInfo;
+use crate::pricing::{self, PricingConfigError, PricingParams};
 use crate::protocol::{
     to_hex, ClientMessage, QuoteMessage, QuoteRequest, RejectMessage, RejectReason, ServerMessage,
     TakerSide,
@@ -109,6 +109,9 @@ pub enum ConfigError {
     /// The maximum size is below the series' minimum.
     #[error("max size below the series minimum")]
     Size,
+    /// The pricing settings fail a startup check.
+    #[error("pricing: {0}")]
+    Pricing(PricingConfigError),
 }
 
 /// The maker service.
@@ -144,7 +147,8 @@ impl MakerService {
     ///
     /// # Errors
     ///
-    /// `Ttl` or `Size` for settings the series would reject.
+    /// `Ttl` or `Size` for settings the series would reject; `Pricing` for pricing settings
+    /// that fail [`PricingParams::validate`].
     pub fn new(
         key: MakerKey,
         config: ServiceConfig,
@@ -159,6 +163,7 @@ impl MakerService {
         if config.max_size < config.market.min_size {
             return Err(ConfigError::Size);
         }
+        config.pricing.validate().map_err(ConfigError::Pricing)?;
         Ok(Self {
             key,
             config,
@@ -220,22 +225,22 @@ impl MakerService {
         let Some(mid) = self.feed.mid() else {
             return reject(id, RejectReason::Pricing, "no reference price");
         };
-        let (bid, ask) = match quote_prices(mid, self.inventory.inventory(), &self.config.pricing) {
-            Ok(prices) => prices,
+        // Model, clamps in bps of the mid, rounding toward the maker (bid down, ask up), then
+        // the guard on the rounded prices (crate::pricing). Both sides are judged, so a crossed
+        // or too-coarse pair is refused whichever side is asked for.
+        let quoted = match pricing::quote(
+            mid,
+            self.inventory.inventory(),
+            &self.config.pricing,
+            market,
+        ) {
+            Ok(q) => q,
             Err(e) => return reject(id, RejectReason::Pricing, e.to_string()),
         };
-        // The taker buys from the maker's ask; it sells into the maker's bid. Rounding goes
-        // toward the maker.
-        let (side, price, rounding) = match request.taker_side {
-            TakerSide::Buy => (Side::Ask, ask, Rounding::Up),
-            TakerSide::Sell => (Side::Bid, bid, Rounding::Down),
-        };
-        if let Err(e) = check_bounds(price, mid, self.config.pricing.max_deviation) {
-            return reject(id, RejectReason::Pricing, e.to_string());
-        }
-        let ticks = match market.price_to_ticks(price, rounding) {
-            Ok(t) => t,
-            Err(e) => return reject(id, RejectReason::Pricing, e.to_string()),
+        // The taker buys from the maker's ask; it sells into the maker's bid.
+        let (side, ticks) = match request.taker_side {
+            TakerSide::Buy => (Side::Ask, quoted.ask_ticks),
+            TakerSide::Sell => (Side::Bid, quoted.bid_ticks),
         };
         let issued_at = self.clock.now();
         let Some(expires_at) = issued_at.get().checked_add(self.config.ttl.get()) else {
