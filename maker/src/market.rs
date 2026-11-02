@@ -95,6 +95,79 @@ impl MarketInfo {
     }
 }
 
+impl MarketInfo {
+    /// The price `ticks` stand for, in quote tokens per base token:
+    /// `ticks × quote_lot_size × 10^base_decimals / (base_lot_size × 10^quote_decimals)`.
+    /// Used to judge a rounded price against the mid.
+    ///
+    /// Common factors are cancelled before anything becomes a `Decimal`, so large lots and
+    /// decimals do not overflow the intermediates (Codex, I12):
+    /// 1. `gcd(quote_lot, base_lot)` is divided out;
+    /// 2. the reduced base lot's factors of 10 move into the exponent;
+    /// 3. `ticks × quote_lot'` is an exact `u128`. If it is wider than `Decimal`'s 96 bits, its
+    ///    last digits move into the exponent, rounding toward zero, with a relative error below
+    ///    1e-28;
+    /// 4. one division by the remaining base lot is left, done before scaling up and after
+    ///    scaling down, so no intermediate exceeds the result.
+    ///
+    /// The result is exact when the numerator fits 96 bits and the last quotient terminates
+    /// within 28 digits, and correct to Decimal's precision otherwise.
+    ///
+    /// Returns `None` for a zero lot size or a price `Decimal` cannot hold.
+    #[must_use]
+    pub fn ticks_to_price(&self, ticks: QuoteLotsPerBaseLot) -> Option<Decimal> {
+        let (q, b) = (self.quote_lot_size, self.base_lot_size);
+        if q == 0 || b == 0 {
+            return None;
+        }
+        let g = gcd(q, b);
+        let (q, mut b) = (q.checked_div(g)?, b.checked_div(g)?);
+        // price = ticks × q × 10^exp / b.
+        let mut exp = i32::from(self.base_decimals).checked_sub(i32::from(self.quote_decimals))?;
+        while b.checked_rem(10)? == 0 {
+            b = b.checked_div(10)?;
+            exp = exp.checked_sub(1)?;
+        }
+        let mut num = u128::from(ticks.get()).checked_mul(u128::from(q))?;
+        // Decimal's mantissa is 96 bits (about 28.9 digits). A wider numerator is cut to fit by
+        // dropping its last digits into the exponent, rounding toward zero: the relative error
+        // is below 1e-28, finer than Decimal's own precision. The denominator then reduces it.
+        const MANTISSA_MAX: u128 = (1u128 << 96) - 1;
+        while num > MANTISSA_MAX {
+            num = num.checked_div(10)?;
+            exp = exp.checked_add(1)?;
+        }
+        let num = i128::try_from(num).ok()?;
+        let ten = Decimal::TEN;
+        let b = Decimal::from(b);
+        if exp >= 0 {
+            // Divide first, then scale up, so the intermediate never exceeds the result.
+            let mut price = Decimal::from_i128_with_scale(num, 0).checked_div(b)?;
+            for _ in 0..exp {
+                price = price.checked_mul(ten)?;
+            }
+            Some(price)
+        } else {
+            // Scale down first (exact up to 28 places), then divide.
+            let places = exp.unsigned_abs();
+            let mut price = Decimal::from_i128_with_scale(num, places.min(28));
+            for _ in 28..places {
+                price = price.checked_div(ten)?;
+            }
+            price.checked_div(b)
+        }
+    }
+}
+
+/// Greatest common divisor, Euclid's algorithm; `gcd(a, 0) = a`.
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while let Some(r) = a.checked_rem(b) {
+        a = b;
+        b = r;
+    }
+    a
+}
+
 /// An unsigned 256-bit integer, four little-endian 64-bit limbs; only what
 /// [`MarketInfo::price_to_ticks`] needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

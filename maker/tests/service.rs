@@ -78,6 +78,10 @@ fn config(max_deviation: &str) -> ServiceConfig {
             time_to_terminal_ms: 3_600_000,
             order_intensity: d("1.5"),
             max_deviation: d(max_deviation),
+            min_half_spread_bps: 5,
+            max_half_spread_bps: 100,
+            max_skew_bps: 100,
+            model_units: quotebook_maker::pricing::ModelUnits::Relative,
         },
         ttl: Seconds::new(30),
         max_size: BaseLots::new(100),
@@ -191,10 +195,11 @@ fn test_service_refusals() {
         reason(no_mid.respond(&request(1, TakerSide::Buy, 10, &taker))),
         RejectReason::Pricing
     );
-    // A price bound tighter than the model's half spread rejects every quote.
-    let (tight, _) = service(&c, Box::new(FixedMid(d("25"))), "0.0000001");
+    // A mid as small as the tick (0.01) rounds the bid to zero: refused, whichever side is
+    // asked for (both sides are judged).
+    let (coarse, _) = service(&c, Box::new(FixedMid(d("0.01"))), "0.05");
     assert_eq!(
-        reason(tight.respond(&request(1, TakerSide::Buy, 10, &taker))),
+        reason(coarse.respond(&request(1, TakerSide::Buy, 10, &taker))),
         RejectReason::Pricing
     );
 }
@@ -224,6 +229,19 @@ fn test_service_config_is_checked() {
         Box::new(c.clone()),
     );
     assert_eq!(r.unwrap_err(), ConfigError::Size);
+    // A guard tighter than the bps caps allow fails at startup, not on every request.
+    let r = MakerService::new(
+        MakerKey::new(Keypair::new()),
+        config("0.0000001"),
+        NonceIssuer::fresh(Nonce::new(0)),
+        Box::new(FixedMid(d("25"))),
+        Box::new(FixedInventory(Decimal::ZERO)),
+        Box::new(c.clone()),
+    );
+    assert_eq!(
+        r.unwrap_err(),
+        ConfigError::Pricing(quotebook_maker::pricing::PricingConfigError::CapsExceedGuard)
+    );
 }
 
 /// PLAN M6: the service refuses to stamp a nonce below the floor of the quote 16,384 nonces
