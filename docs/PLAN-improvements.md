@@ -1,6 +1,6 @@
 # quotebook: improvement plan
 
-Status: **draft r4, for Codex review**. GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
+Status: **draft r5, for Codex review**. GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
 Baseline: `main` at `4b3751f` (v0.1.1 on crates.io; program `3Aq1Aw…6mbo` on devnet, built
 from `898c173`). `docs/PLAN.md` stays the v1 design record; this file plans the work after v1.
 
@@ -283,8 +283,13 @@ Two layers. The fast one runs in `make pre-push`; the slow one runs on demand.
       only when that frame's id is the configured program, at any depth: `settle` called by
       CPI from another program is supported. A foreign program's bytes are always rejected,
       even when that program is nested inside quotebook's own frame.
-    - the emitting frame closed with its matching `Program <id> success`. An event is
-      yielded only then.
+    - the emitting frame and every ancestor frame closed with their matching
+      `Program <id> success`. Events are buffered per frame. When a frame fails, its own
+      events and those of all its descendants are dropped. An event is yielded only once
+      the whole ancestor chain, up to the top-level instruction, has succeeded. In today's
+      runtime a failed CPI aborts the whole transaction, so a caller cannot catch it and
+      the case of a successful `settle` under a failed but caught ancestor cannot occur. The
+      rule costs nothing and keeps the API correct should that ever change.
     If the stack does not balance, a frame is left open, or the logs carry the runtime's
     `Log truncated` marker, `fill_events` returns `Incomplete` with the events it could
     prove so far. It fails closed and never guesses.
@@ -307,7 +312,10 @@ Two layers. The fast one runs in `make pre-push`; the slow one runs on demand.
   - `settle` called by CPI from a test program at depth 2 yields its event;
   - a foreign program's same bytes, emitted inside a nested frame, are rejected;
   - logs cut before the success line, and logs carrying `Log truncated`, return
-    `Incomplete`.
+    `Incomplete`;
+  - a caught ancestor failure, A calling B calling `settle`: `settle` succeeds, then B
+    fails, and A and the transaction succeed. The runtime cannot produce this, so the test
+    is a unit test over synthetic log lines; it must yield no event.
 
 ### I8. TypeScript SDK checked against Rust vectors (M)
 
