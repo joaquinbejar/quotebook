@@ -498,17 +498,33 @@ tight.
   service refuses with an error that names the cause:
   - `TickTooCoarse`: the tick makes either side deviate beyond the guard, for example mid
     0.01 with a 0.01 tick;
-  - `NonPositiveBid`: the rounded bid is 0 or below.
+  - `NonPositiveBid`: the rounded bid is 0 or below;
+  - `Crossed`: rounding left the bid at or above the ask.
   The taker sees an error instead of a bad price.
 
-**Domain:** a quote is guaranteed when both of these hold:
-- the tick is small enough: `tick ≤ mid × guard / 2`;
-- the configuration is consistent: `max_half_spread_bps + max_skew_bps ≤ guard / 2`, checked
-  at startup, where an inconsistent configuration is a startup error.
+**Units:**
+- `guard` is a fraction: 0.05 means 5% of the mid.
+- The `*_bps` parameters are basis points: 1 bp = 0.0001 of the mid.
+- Every inequality below converts bps to a fraction with `/ 10,000`.
 
-Then each rounded side deviates from the mid by at most `guard / 2 + tick ≤ guard`, and the
-bid stays positive (with a guard below 2/3). Outside the domain, the typed refusals above
-apply.
+**Startup checks** (each failure is a startup error, never a silent fallback):
+- `0 < min_half_spread_bps ≤ max_half_spread_bps`;
+- `0 < guard < 2/3`;
+- `(max_half_spread_bps + max_skew_bps) / 10,000 ≤ guard / 2`.
+
+**Domain:** with those checks, `tick ≤ mid × guard / 2` is a **sufficient** condition. Each
+rounded side then deviates from the mid by at most `guard / 2 + tick / mid ≤ guard`, and the
+bid is positive. It is not a necessary condition: outside it a valid rounded pair can still
+exist.
+
+The policy outside the domain is to compute, then judge. The service computes the rounded
+pair as usual and runs every check on it:
+- it quotes when the pair passes;
+- otherwise it refuses with the first rule that failed:
+  - `TickTooCoarse` when a side's deviation exceeds the guard;
+  - `NonPositiveBid` when the rounded bid is 0 or below;
+  - `Crossed` when rounding left `bid ≥ ask`.
+There is no blanket refusal outside the domain.
 
 **Ordering:**
 - At zero inventory: `bid < mid < ask`.
@@ -525,8 +541,12 @@ apply.
   has a half-spread within the bps bounds, passes the guard, and has `bid < mid < ask`.
 - A property test over (mid, tick, inventory), with mid from 0.01 to 1,000,000 and tick from
   1e-6 to 1:
-  - inside the domain, a quote exists and satisfies the ordering rules for its inventory;
-  - outside it, the refusal is exactly `TickTooCoarse` or `NonPositiveBid`.
+  - inside the domain, a quote always exists and satisfies the ordering rules for its
+    inventory;
+  - outside it, either a quote that satisfies every rule, or a refusal whose variant matches
+    an independent recomputation of the first failed rule. A refusal is never issued for a
+    pair that would pass.
+- Startup checks: each violated inequality fails startup with its own error.
 - Overrides: absolute flags that would breach a bps clamp are clamped (tested at both caps).
 - Regression: the I9 failure (absolute defaults at mid 1.20) now yields a valid quote.
 
