@@ -14,6 +14,8 @@
 //! 10. `[]` base mint's token program
 //! 11. `[]` quote mint's token program
 //! 12. `[]` instructions sysvar
+//! 13. `[writable]` the fee account, only when the series' `fee_bps > 0`: a token account of the
+//!     quote mint owned by the Config PDA (ADR 0001)
 //!
 //! On success it logs one fill event (`quotebook_core::event::FillEvent`, 168 bytes) with
 //! `sol_log_data`, after both transfers.
@@ -32,6 +34,7 @@ use pinocchio::sysvars::Sysvar;
 use pinocchio::{Address, ProgramResult};
 use pinocchio_token::instructions::TransferChecked;
 use quotebook_core::event::FillEvent;
+use quotebook_core::fee;
 use quotebook_core::instruction::SettleArgs;
 use quotebook_core::{sigverify, BaseLots, Quote, QuotebookError, Side, UnixTimestamp};
 
@@ -39,7 +42,7 @@ use super::signer;
 use crate::error::custom;
 use crate::mint::{MINT_DECIMALS, TOKEN_2022_PROGRAM, TOKEN_PROGRAM};
 use crate::pda;
-use crate::state::{self, MakerState, Series, DELEGATE_SEED, MAKER_SEED, SERIES_SEED};
+use crate::state::{self, MakerState, Series, CONFIG_SEED, DELEGATE_SEED, MAKER_SEED, SERIES_SEED};
 use crate::token::{self, Role};
 
 /// The ed25519 signature-verification precompile.
@@ -133,7 +136,7 @@ fn transfer(
 /// `IncorrectProgramId`; the token-account errors; the token program's errors.
 #[inline(never)]
 pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) -> ProgramResult {
-    let [taker, series, maker_state, delegate, maker_base, maker_quote, taker_base, taker_quote, base_mint, quote_mint, base_program, quote_program, sysvar, ..] =
+    let [taker, series, maker_state, delegate, maker_base, maker_quote, taker_base, taker_quote, base_mint, quote_mint, base_program, quote_program, sysvar, rest @ ..] =
         accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
@@ -182,6 +185,22 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
         return Err(custom(QuotebookError::FillSizeInvalid));
     }
     let (base_atoms, quote_atoms) = amounts(&quote, args.fill_size, &s)?;
+    // The taker fee (ADR 0001): floor(quote_atoms × fee_bps / 10,000), in the taker's favour.
+    // An Ask's total `quote_atoms + fee` and a Bid's proceeds `quote_atoms - fee` are checked
+    // here, before any state change or transfer.
+    let fee_bps = s.fee_bps();
+    // No u128 division for the fee-free series (every v1 series): fee 0 directly.
+    let fee = if fee_bps == 0 {
+        0
+    } else {
+        fee::fee(quote_atoms, fee_bps).ok_or(custom(QuotebookError::Overflow))?
+    };
+    quote_atoms
+        .checked_add(fee)
+        .ok_or(custom(QuotebookError::Overflow))?;
+    let taker_proceeds = quote_atoms
+        .checked_sub(fee)
+        .ok_or(custom(QuotebookError::Overflow))?;
 
     // 5. Replay: consume the nonce before any CPI.
     let state_address = *maker_state.address();
@@ -257,7 +276,24 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
         taker_quote_role,
     )?;
 
-    // The two legs. The maker's leg is signed by its delegate PDA.
+    // The fee account, when the series charges one: any token account of the quote mint owned
+    // by the Config PDA (ADR 0001).
+    let fee_account = if fee_bps > 0 {
+        let account = rest.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
+        let (config_pda, _) = pda::find(&[CONFIG_SEED], program_id)?;
+        token::check_account(
+            account,
+            quote_program_id,
+            &s.quote_mint,
+            &config_pda,
+            Role::Receives,
+        )?;
+        Some(account)
+    } else {
+        None
+    };
+
+    // The legs. The maker's legs are signed by its delegate PDA.
     let seeds = [
         Seed::from(DELEGATE_SEED),
         Seed::from(terms.maker.as_ref()),
@@ -275,16 +311,30 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
                 base_decimals,
                 None,
             )?;
+            // The maker pays `quote_atoms` in total: the proceeds to the taker, the fee to the
+            // fee account.
             transfer(
                 quote_program,
                 maker_quote,
                 quote_mint,
                 taker_quote,
                 delegate,
-                quote_atoms,
+                taker_proceeds,
                 quote_decimals,
                 Some(&seeds),
             )?;
+            if let Some(fee_account) = fee_account {
+                transfer(
+                    quote_program,
+                    maker_quote,
+                    quote_mint,
+                    fee_account,
+                    delegate,
+                    fee,
+                    quote_decimals,
+                    Some(&seeds),
+                )?;
+            }
         }
         Side::Ask => {
             transfer(
@@ -307,6 +357,18 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
                 quote_decimals,
                 None,
             )?;
+            if let Some(fee_account) = fee_account {
+                transfer(
+                    quote_program,
+                    taker_quote,
+                    quote_mint,
+                    fee_account,
+                    taker,
+                    fee,
+                    quote_decimals,
+                    None,
+                )?;
+            }
         }
     }
 
@@ -322,7 +384,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
         fill_size: args.fill_size,
         base_atoms,
         quote_atoms,
-        fee: 0,
+        fee,
         unix_timestamp: now,
     };
     crate::log::data(&event.encode());

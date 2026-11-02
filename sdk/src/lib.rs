@@ -118,6 +118,7 @@ mod tests {
             maker_quote: a(16),
             taker_base: a(17),
             taker_quote: a(18),
+            fee_account: None,
         }
     }
 

@@ -23,7 +23,8 @@ solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tokio-tungstenite = { workspace = true }
+rustls = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

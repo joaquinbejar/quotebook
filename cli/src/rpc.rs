@@ -41,6 +41,23 @@ pub trait Rpc {
     ///
     /// `Rpc` if the call fails.
     fn genesis_hash(&mut self) -> Result<Hash, CliError>;
+    /// Accounts owned by `program_id` with exactly `data_size` bytes whose first byte is `tag`
+    /// (RPC `getProgramAccounts` with a size and a memcmp filter).
+    ///
+    /// # Errors
+    ///
+    /// `Rpc` if the call fails, or if this RPC cannot list accounts (the default).
+    fn program_accounts(
+        &mut self,
+        program_id: &Address,
+        data_size: u64,
+        tag: u8,
+    ) -> Result<Vec<(Address, Account)>, CliError> {
+        let _ = (program_id, data_size, tag);
+        Err(CliError::Rpc(
+            "this RPC cannot list program accounts".into(),
+        ))
+    }
 }
 
 /// A real cluster, at `confirmed` commitment. The URL (which may embed an API key) is never
@@ -101,6 +118,43 @@ impl Rpc for Cluster {
         self.client
             .get_genesis_hash()
             .map_err(|e| CliError::Rpc(self.describe(&e)))
+    }
+
+    fn program_accounts(
+        &mut self,
+        program_id: &Address,
+        data_size: u64,
+        tag: u8,
+    ) -> Result<Vec<(Address, Account)>, CliError> {
+        use solana_rpc_client::api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
+        use solana_rpc_client::api::filter::{Memcmp, RpcFilterType};
+        let config = RpcProgramAccountsConfig {
+            filters: Some(vec![
+                RpcFilterType::DataSize(data_size),
+                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, vec![tag])),
+            ]),
+            account_config: RpcAccountInfoConfig {
+                encoding: Some(solana_account_decoder_client_types::UiAccountEncoding::Base64),
+                commitment: Some(CommitmentConfig::confirmed()),
+                ..RpcAccountInfoConfig::default()
+            },
+            with_context: None,
+            sort_results: None,
+        };
+        let accounts = self
+            .client
+            .get_program_ui_accounts_with_config(program_id, config)
+            .map_err(|e| CliError::Rpc(self.describe(&e)))?;
+        accounts
+            .into_iter()
+            .map(|(address, ui)| {
+                ui.to_account()
+                    .map(|account| (address, account))
+                    .ok_or_else(|| {
+                        CliError::Rpc("undecodable account in getProgramAccounts".into())
+                    })
+            })
+            .collect()
     }
 }
 

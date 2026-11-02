@@ -172,3 +172,89 @@ pub fn cancel_nonce(
     let ix = ix::cancel_nonce(program_id, &maker.pubkey(), nonce);
     send(rpc, &[ix], payer, &[maker])
 }
+
+/// `set_profile` (ADR 0002): publish or replace `maker`'s registry profile. The text is checked
+/// here with the program's rules before anything is sent.
+///
+/// # Errors
+///
+/// `Args` for an invalid endpoint or name; the RPC errors.
+pub fn set_profile(
+    rpc: &mut dyn Rpc,
+    program_id: &Address,
+    maker: &Keypair,
+    payer: &Keypair,
+    endpoint: &str,
+    name: &str,
+) -> Result<Signature, CliError> {
+    let args = quotebook_core::profile::ProfileArgs::new(endpoint.as_bytes(), name.as_bytes())
+        .map_err(|_| {
+            CliError::Args(
+                "invalid profile: the endpoint is wss://, 7 to 128 printable bytes without spaces; \
+                 the name at most 32 printable bytes"
+                    .into(),
+            )
+        })?;
+    let ix = ix::set_profile(program_id, &maker.pubkey(), &payer.pubkey(), &args);
+    send(rpc, &[ix], payer, &[maker])
+}
+
+/// `close_profile` (ADR 0002): remove `maker`'s profile, its rent to `destination`.
+///
+/// # Errors
+///
+/// The RPC errors.
+pub fn close_profile(
+    rpc: &mut dyn Rpc,
+    program_id: &Address,
+    maker: &Keypair,
+    payer: &Keypair,
+    destination: &Address,
+) -> Result<Signature, CliError> {
+    let ix = ix::close_profile(program_id, &maker.pubkey(), destination);
+    send(rpc, &[ix], payer, &[maker])
+}
+
+/// Creates the canonical fee account for `quote_mint` (ADR 0001); returns its address.
+///
+/// # Errors
+///
+/// The RPC errors.
+pub fn create_fee_account(
+    rpc: &mut dyn Rpc,
+    program_id: &Address,
+    payer: &Keypair,
+    quote_mint: &Address,
+) -> Result<(Address, Signature), CliError> {
+    let program = crate::rpc::existing(rpc, quote_mint)?.owner;
+    let ix = ix::create_fee_account(program_id, &payer.pubkey(), quote_mint, &program);
+    let sig = send(rpc, &[ix], payer, &[])?;
+    Ok((pda::fee_account(program_id, quote_mint, &program), sig))
+}
+
+/// `withdraw_fees` from the canonical fee account of `quote_mint` to `destination`.
+///
+/// # Errors
+///
+/// The RPC errors, including the program's rejection.
+pub fn withdraw_fees(
+    rpc: &mut dyn Rpc,
+    program_id: &Address,
+    admin: &Keypair,
+    payer: &Keypair,
+    quote_mint: &Address,
+    destination: &Address,
+    amount: u64,
+) -> Result<Signature, CliError> {
+    let program = crate::rpc::existing(rpc, quote_mint)?.owner;
+    let ix = ix::withdraw_fees(
+        program_id,
+        &admin.pubkey(),
+        &pda::fee_account(program_id, quote_mint, &program),
+        destination,
+        quote_mint,
+        &program,
+        amount,
+    );
+    send(rpc, &[ix], payer, &[admin])
+}

@@ -111,6 +111,7 @@ fn ask_with(
         &taker_key.pubkey(),
         TakerSide::Buy,
         size,
+        &taker::MakerFilter::default(),
     )
     .map(|_| ());
     let program = taker::settle(

@@ -202,6 +202,15 @@ impl Env {
         base: &Address,
         quote: &Address,
     ) -> (Address, TransactionMetadata) {
+        self.create_series_with_args(base, quote, SeriesArgs::default())
+    }
+
+    pub fn create_series_with_args(
+        &mut self,
+        base: &Address,
+        quote: &Address,
+        args: SeriesArgs,
+    ) -> (Address, TransactionMetadata) {
         let index = self.config().series_count;
         let series = series_address(base, quote, index);
         let ix = create_series_ix(
@@ -210,7 +219,7 @@ impl Env {
             &series,
             base,
             quote,
-            SeriesArgs::default().encode(),
+            args.encode(),
         );
         let admin = self.admin.insecure_clone();
         (series, self.send(&[ix], &[&admin]).unwrap())
@@ -277,6 +286,8 @@ pub struct SeriesArgs {
     pub quote_lot_size: u64,
     pub max_quote_ttl: i64,
     pub min_size: u64,
+    /// `None`: the v1 32-byte encoding; `Some`: 34 bytes with the fee (ADR 0001).
+    pub fee_bps: Option<u16>,
 }
 
 impl Default for SeriesArgs {
@@ -286,6 +297,7 @@ impl Default for SeriesArgs {
             quote_lot_size: 10,
             max_quote_ttl: 60,
             min_size: 1,
+            fee_bps: None,
         }
     }
 }
@@ -297,6 +309,9 @@ impl SeriesArgs {
         v.extend_from_slice(&self.quote_lot_size.to_le_bytes());
         v.extend_from_slice(&self.max_quote_ttl.to_le_bytes());
         v.extend_from_slice(&self.min_size.to_le_bytes());
+        if let Some(fee) = self.fee_bps {
+            v.extend_from_slice(&fee.to_le_bytes());
+        }
         v
     }
 }
@@ -486,6 +501,9 @@ pub struct Market {
     pub maker_quote: Address,
     pub taker_base: Address,
     pub taker_quote: Address,
+    /// The fee account `settle` gets as account 13 (ADR 0001): created by `Market::with` when
+    /// the spec has a non-zero fee, owned by the Config PDA.
+    pub fee_account: Option<Address>,
 }
 
 /// Starting balances and allowances, in atoms.
@@ -494,6 +512,8 @@ pub const FUNDS: u64 = 1_000_000_000_000;
 /// Which token program each mint uses, and the TLV extensions of each token account.
 #[derive(Clone, Default)]
 pub struct MarketSpec {
+    /// The series fee (ADR 0001); `None` creates a v1 series.
+    pub fee_bps: Option<u16>,
     pub base_2022: bool,
     pub quote_2022: bool,
     pub base_mint_ext: Vec<u8>,
@@ -525,7 +545,14 @@ impl Market {
         env.set(base_mint, base_program, mint_data(&spec.base_mint_ext));
         let quote_mint = Keypair::new().pubkey();
         env.set(quote_mint, quote_program, mint_data(&spec.quote_mint_ext));
-        let (series, _) = env.create_series_with(&base_mint, &quote_mint);
+        let (series, _) = env.create_series_with_args(
+            &base_mint,
+            &quote_mint,
+            SeriesArgs {
+                fee_bps: spec.fee_bps,
+                ..SeriesArgs::default()
+            },
+        );
         let maker = env.maker();
         let taker = Keypair::new();
         env.svm.airdrop(&taker.pubkey(), 1_000_000_000).unwrap();
@@ -562,6 +589,9 @@ impl Market {
             None,
             &spec.taker_quote_ext,
         );
+        let fee_account = spec.fee_bps.filter(|f| *f > 0).map(|_| {
+            env.token_account(quote_program, &quote_mint, &config_address(), 0, None, &[])
+        });
         Self {
             env,
             series,
@@ -575,6 +605,7 @@ impl Market {
             maker_quote,
             taker_base,
             taker_quote,
+            fee_account,
         }
     }
 
@@ -628,7 +659,10 @@ impl Market {
                 AccountMeta::new_readonly(self.base_program, false),
                 AccountMeta::new_readonly(self.quote_program, false),
                 AccountMeta::new_readonly(INSTRUCTIONS, false),
-            ],
+            ]
+            .into_iter()
+            .chain(self.fee_account.map(|f| AccountMeta::new(f, false)))
+            .collect(),
         )
     }
 

@@ -7,7 +7,7 @@
 
 use bytemuck::Pod;
 
-pub use layout::{Config, Hdr, MakerState, Series};
+pub use layout::{Config, Hdr, MakerProfile, MakerState, Series};
 
 /// Layout version written into every header.
 pub const VERSION: u8 = 1;
@@ -20,6 +20,8 @@ pub const SERIES_SEED: &[u8] = b"series";
 pub const MAKER_SEED: &[u8] = b"maker";
 /// PDA seed prefix of a maker's delegate authority: `["delegate", maker]`.
 pub const DELEGATE_SEED: &[u8] = b"delegate";
+/// Seed of a maker's profile PDA, `["profile", maker]` (ADR 0002).
+pub const PROFILE_SEED: &[u8] = b"profile";
 
 /// Account discriminators, the first header byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,6 +33,8 @@ pub enum AccountTag {
     Series = 2,
     /// [`MakerState`].
     MakerState = 3,
+    /// [`MakerProfile`] (ADR 0002).
+    MakerProfile = 4,
 }
 
 /// Pod account layouts. `derive(Pod)` on a multi-field struct emits a compile-time
@@ -100,8 +104,11 @@ mod layout {
         pub quote_is_2022: u8,
         /// Zero.
         pub _pad: [u8; 5],
-        /// Reserved for fees; zero.
-        pub _reserved: [u8; 8],
+        /// The taker fee in basis points of the quote amount, little-endian `u16`; set at
+        /// creation and never changed (ADR 0001). Series created before fees read 0.
+        pub fee_bps: [u8; 2],
+        /// Reserved; zero.
+        pub _reserved: [u8; 6],
     }
 
     /// A maker's replay state, PDA `["maker", maker]`. 2,120 bytes. Permanent: there is no
@@ -121,6 +128,28 @@ mod layout {
         pub _pad: [u8; 7],
         /// The nonce replay window.
         pub nonces: NonceWindow,
+    }
+
+    /// A maker's published endpoint, PDA `["profile", maker]`. 208 bytes. Written only by the
+    /// maker; never read by `settle` (ADR 0002). Canonical: every byte without data is zero
+    /// ([`crate::profile`]).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
+    #[repr(C)]
+    pub struct MakerProfile {
+        /// Header, tag `MakerProfile`.
+        pub hdr: Hdr,
+        /// The maker's wallet; the only key that can write or close the profile.
+        pub maker: Address,
+        /// Bytes of `endpoint` in use, 7 to 128.
+        pub endpoint_len: u8,
+        /// Bytes of `name` in use, 0 to 32.
+        pub name_len: u8,
+        /// Zero.
+        pub _pad: [u8; 6],
+        /// `wss://` URL, printable ASCII without spaces; the tail past `endpoint_len` is zero.
+        pub endpoint: [u8; 128],
+        /// Display name, printable ASCII; the tail past `name_len` is zero.
+        pub name: [u8; 32],
     }
 }
 
@@ -152,9 +181,27 @@ impl ProgramAccount for Series {
     }
 }
 
+impl Series {
+    /// The series' taker fee, in basis points (ADR 0001).
+    #[must_use]
+    #[inline]
+    pub const fn fee_bps(&self) -> u16 {
+        u16::from_le_bytes(self.fee_bps)
+    }
+}
+
 impl ProgramAccount for MakerState {
     const TAG: AccountTag = AccountTag::MakerState;
     const LEN: usize = 2_120;
+    #[inline]
+    fn hdr(&self) -> &Hdr {
+        &self.hdr
+    }
+}
+
+impl ProgramAccount for MakerProfile {
+    const TAG: AccountTag = AccountTag::MakerProfile;
+    const LEN: usize = 208;
     #[inline]
     fn hdr(&self) -> &Hdr {
         &self.hdr
@@ -165,6 +212,7 @@ impl ProgramAccount for MakerState {
 const _: [(); Config::LEN] = [(); core::mem::size_of::<Config>()];
 const _: [(); Series::LEN] = [(); core::mem::size_of::<Series>()];
 const _: [(); MakerState::LEN] = [(); core::mem::size_of::<MakerState>()];
+const _: [(); MakerProfile::LEN] = [(); core::mem::size_of::<MakerProfile>()];
 
 /// A header for a freshly created account of type `T`.
 #[must_use]

@@ -69,7 +69,8 @@ pub struct Answer {
     pub maker_quote: Address,
 }
 
-/// Sends `request` to the maker at `url` (`ws://host:port`) and returns its answer.
+/// Sends `request` to the maker at `url` (`wss://…`, or `ws://host:port` for a local service)
+/// and returns its answer. TLS is rustls with the webpki roots.
 ///
 /// # Errors
 ///

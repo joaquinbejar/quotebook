@@ -189,6 +189,7 @@ fn measure() -> Vec<Row> {
         maker_quote_ext: heavy_account.clone(),
         taker_base_ext: heavy_account.clone(),
         taker_quote_ext: heavy_account,
+        ..MarketSpec::default()
     };
     let settle = |spec: MarketSpec, side: Side, slide: bool| -> (u64, u64) {
         let mut m = Market::with(spec);
@@ -249,6 +250,133 @@ fn measure() -> Vec<Row> {
         note: "Token-2022, worst case (as SPL, plus every allowlisted mint extension and three account extensions)",
         cu: worst(&token_2022),
     });
+
+    // Series with a fee (ADR 0001): the third transfer and the fee account checks.
+    for (note, side, is_2022) in [
+        (
+            "100 bps fee, SPL Token, maker bid (two quote transfers out of the maker)",
+            Side::Bid,
+            false,
+        ),
+        (
+            "100 bps fee, SPL Token, maker ask (two quote transfers out of the taker)",
+            Side::Ask,
+            false,
+        ),
+        (
+            "100 bps fee, Token-2022 both legs, plain accounts, maker bid",
+            Side::Bid,
+            true,
+        ),
+    ] {
+        let spec = MarketSpec {
+            fee_bps: Some(100),
+            base_2022: is_2022,
+            quote_2022: is_2022,
+            ..MarketSpec::default()
+        };
+        rows.push(Row {
+            name: "settle",
+            note,
+            cu: settle(spec, side, false).0,
+        });
+    }
+    {
+        let mut m = Market::with(MarketSpec {
+            fee_bps: Some(100),
+            ..MarketSpec::default()
+        });
+        let mut t = m.terms();
+        t.price = quotebook_core::QuoteLotsPerBaseLot::new(1_000);
+        m.settle(t, 10).unwrap();
+        let fa = m.fee_account.unwrap();
+        let (qm, qp) = (m.quote_mint, m.quote_program);
+        let dest = m
+            .env
+            .token_account(qp, &qm, &Keypair::new().pubkey(), 0, None, &[]);
+        let admin = m.env.admin.insecure_clone();
+        let mut data = vec![8u8];
+        data.extend_from_slice(&1_000u64.to_le_bytes());
+        let ix = solana_instruction::Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &data,
+            vec![
+                solana_instruction::AccountMeta::new_readonly(admin.pubkey(), true),
+                solana_instruction::AccountMeta::new_readonly(config_address(), false),
+                solana_instruction::AccountMeta::new(fa, false),
+                solana_instruction::AccountMeta::new(dest, false),
+                solana_instruction::AccountMeta::new_readonly(qm, false),
+                solana_instruction::AccountMeta::new_readonly(qp, false),
+            ],
+        );
+        let meta = m.env.send(&[ix], &[&admin]).unwrap();
+        rows.push(Row {
+            name: "withdraw_fees",
+            note: "SPL Token, Config PDA signs (config PDA re-derivation + transfer)",
+            cu: meta.compute_units_consumed,
+        });
+    }
+
+    // The maker registry (ADR 0002): create, update with longer text, close.
+    {
+        let mut env = Market::new().env;
+        let maker = Keypair::new_from_array([0x42; 32]);
+        env.svm.airdrop(&maker.pubkey(), 1_000_000_000).unwrap();
+        let profile =
+            Address::find_program_address(&[b"profile", maker.pubkey().as_ref()], &PROGRAM_ID).0;
+        let set = |env: &mut Env, endpoint: &[u8], name: &[u8]| {
+            let mut data = vec![9u8, u8::try_from(endpoint.len()).unwrap()];
+            data.extend_from_slice(endpoint);
+            data.push(u8::try_from(name.len()).unwrap());
+            data.extend_from_slice(name);
+            let ix = solana_instruction::Instruction::new_with_bytes(
+                PROGRAM_ID,
+                &data,
+                vec![
+                    solana_instruction::AccountMeta::new_readonly(maker.pubkey(), true),
+                    solana_instruction::AccountMeta::new(env.payer.pubkey(), true),
+                    solana_instruction::AccountMeta::new(profile, false),
+                    solana_instruction::AccountMeta::new_readonly(SYSTEM, false),
+                ],
+            );
+            env.send(&[ix], &[&maker]).unwrap().compute_units_consumed
+        };
+        let created = set(&mut env, b"wss://maker.example/rfq", b"Desk");
+        let long = [b"wss://".as_slice(), &[b'a'; 122]].concat();
+        let updated = set(&mut env, &long, &[b'n'; 32]);
+        let close = solana_instruction::Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &[10u8],
+            vec![
+                solana_instruction::AccountMeta::new_readonly(maker.pubkey(), true),
+                solana_instruction::AccountMeta::new(profile, false),
+                solana_instruction::AccountMeta::new(maker.pubkey(), false),
+            ],
+        );
+        let closed = env
+            .send(&[close], &[&maker])
+            .unwrap()
+            .compute_units_consumed;
+        for (name, note, cu) in [
+            (
+                "set_profile",
+                "create: 23-byte endpoint, 4-byte name (PDA find + create)",
+                created,
+            ),
+            (
+                "set_profile",
+                "update: 128-byte endpoint, 32-byte name (stored-bump verify)",
+                updated,
+            ),
+            (
+                "close_profile",
+                "stored-bump verify, lamports to the maker",
+                closed,
+            ),
+        ] {
+            rows.push(Row { name, note, cu });
+        }
+    }
 
     // The precompile alone, and what it adds to the fee.
     let m = Market::new();

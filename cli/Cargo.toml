@@ -31,6 +31,7 @@ quotebook-maker = { path = "../maker", version = "0.1" }
 quotebook-sdk = { workspace = true }
 rust_decimal = { workspace = true }
 solana-account = { workspace = true }
+solana-account-decoder-client-types = { workspace = true }
 solana-address = { workspace = true, features = ["decode"] }
 solana-commitment-config = { workspace = true }
 solana-hash = { workspace = true }

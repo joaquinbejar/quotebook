@@ -118,6 +118,7 @@ impl Chain {
             quote_lot_size: 100,
             max_quote_ttl: 60,
             min_size: 1,
+            fee_bps: None,
         };
         let (base, quote) = (chain.base_mint, chain.quote_mint);
         chain
@@ -275,6 +276,7 @@ impl Chain {
             maker_quote: maker.quote,
             taker_base: taker.base,
             taker_quote: taker.quote,
+            fee_account: None,
         };
         quotebook_sdk::settle_instructions(
             &PROGRAM_ID,
@@ -304,6 +306,7 @@ impl Chain {
             maker_quote: maker.quote,
             taker_base: taker.base,
             taker_quote: taker.quote,
+            fee_account: None,
         };
         let pair = quotebook_sdk::settle_instructions(
             &PROGRAM_ID,

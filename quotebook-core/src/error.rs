@@ -77,11 +77,17 @@ pub enum QuotebookError {
     /// A token account has an extension `settle` does not support: CPI Guard on the taker's
     /// paying account, or required memos on a receiving account.
     AccountExtensionUnsupported = 131,
+    /// A series fee above `MAX_FEE_BPS` (ADR 0001).
+    FeeTooHigh = 132,
+    /// `withdraw_fees` asked for more than the fee account holds (ADR 0001).
+    InsufficientFees = 133,
+    /// A maker profile is not canonical: bad endpoint or name, or non-zero padding (ADR 0002).
+    InvalidProfile = 134,
 }
 
 impl QuotebookError {
     /// Every variant, in discriminant order.
-    pub const ALL: [Self; 32] = [
+    pub const ALL: [Self; 35] = [
         Self::InvalidInstruction,
         Self::InvalidInstructionData,
         Self::MissingSignature,
@@ -114,6 +120,9 @@ impl QuotebookError {
         Self::WatermarkNotIncreasing,
         Self::SelfTrade,
         Self::AccountExtensionUnsupported,
+        Self::FeeTooHigh,
+        Self::InsufficientFees,
+        Self::InvalidProfile,
     ];
 
     /// The custom program error code.
@@ -167,6 +176,9 @@ impl fmt::Display for QuotebookError {
             Self::WatermarkNotIncreasing => "cancel_all must raise the nonce watermark",
             Self::SelfTrade => "the taker is the quote's maker",
             Self::AccountExtensionUnsupported => "unsupported token account extension",
+            Self::FeeTooHigh => "series fee above the maximum",
+            Self::InsufficientFees => "withdrawal above the fee balance",
+            Self::InvalidProfile => "maker profile is not canonical",
         };
         f.write_str(text)
     }
@@ -201,7 +213,7 @@ mod tests {
             assert_eq!(QuotebookError::from_code(e.code()), Some(e));
         }
         assert_eq!(QuotebookError::from_code(99), None);
-        assert_eq!(QuotebookError::from_code(132), None);
+        assert_eq!(QuotebookError::from_code(135), None);
     }
 
     #[test]

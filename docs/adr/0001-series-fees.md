@@ -1,7 +1,7 @@
 # ADR 0001: immutable per-series taker fees
 
-**Status:** proposed (I10 of [`PLAN-improvements.md`](../PLAN-improvements.md)). For review by
-Codex and SOLANA-PROJECTS; no code is written before both accept it.
+**Status:** accepted (I10 of [`PLAN-improvements.md`](../PLAN-improvements.md)): accepted by
+Codex and SOLANA-PROJECTS (PR #31), implemented in the I10 code PR.
 
 **Already decided** by SOLANA-PROJECTS (msg 43378):
 - the fee is paid by the taker;

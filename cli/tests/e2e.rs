@@ -64,6 +64,7 @@ fn test_cli_end_to_end_over_rpc() {
         quote_lot_size: 100,
         max_quote_ttl: 60,
         min_size: 1,
+        fee_bps: None,
     };
     let (series, _) = admin::create_series(
         &mut rpc,
@@ -173,6 +174,7 @@ fn test_cli_end_to_end_over_rpc() {
         &taker_key.pubkey(),
         TakerSide::Buy,
         size,
+        &taker::MakerFilter::default(),
     )
     .unwrap();
     // The same quote checked for a bigger size is refused before sending.
@@ -184,6 +186,7 @@ fn test_cli_end_to_end_over_rpc() {
         &taker_key.pubkey(),
         TakerSide::Buy,
         BaseLots::new(41),
+        &taker::MakerFilter::default(),
     );
     assert!(matches!(
         err,

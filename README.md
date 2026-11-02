@@ -300,7 +300,21 @@ quotebook-taker settle $QB --maker ws://<host>:9000 --series <SERIES> --side buy
 ```
 
 `quotebook-admin` also has `show`, `show-series`, `cancel-all`, `cancel-nonce`, `pause` and
-`resume`; `quotebook-taker quote` verifies and prints a quote without sending it. The full
+`resume`; `quotebook-taker quote` verifies and prints a quote without sending it.
+
+Makers can list their endpoint in the on-chain registry
+([ADR 0002](https://github.com/joaquinbejar/quotebook/blob/main/docs/adr/0002-maker-registry.md)) with
+`quotebook-admin set-profile $QB --maker maker.json --payer payer.json --endpoint wss://<host>/rfq
+--name <TEXT>` (`close-profile` removes it). `quotebook-taker discover $QB` lists the registry;
+`quote` and `settle` take `--discover` in place of `--maker`: every listed maker is asked, each
+quote must be signed by the maker of the profile its endpoint came from, and the best checked
+price wins. `--allow <MAKER>[,<MAKER>…]` restricts the makers asked and the signed `quote.maker`
+accepted. A listing grants nothing: every quote is checked like any other.
+
+Series can carry a taker fee fixed at creation
+([ADR 0001](https://github.com/joaquinbejar/quotebook/blob/main/docs/adr/0001-series-fees.md)):
+`create-series ... --fee-bps <0..100>`, after `quotebook-admin create-fee-account $QB --payer
+payer.json --quote <QUOTE_MINT>`; the admin moves collected fees with `withdraw-fees`. The full
 runbook is [docs/devnet.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/devnet.md).
 
 ### Testing and Benchmarks

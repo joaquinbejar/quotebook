@@ -12,8 +12,8 @@ use quotebook_core::QuotebookError;
 use crate::error::custom;
 
 pub use quotebook_core::accounts::{
-    new_hdr, AccountTag, Config, Hdr, MakerState, ProgramAccount, Series, CONFIG_SEED,
-    DELEGATE_SEED, MAKER_SEED, SERIES_SEED, VERSION,
+    new_hdr, AccountTag, Config, Hdr, MakerProfile, MakerState, ProgramAccount, Series,
+    CONFIG_SEED, DELEGATE_SEED, MAKER_SEED, PROFILE_SEED, SERIES_SEED, VERSION,
 };
 
 /// Checks owner, length, tag and version of an existing account of type `T`.

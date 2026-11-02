@@ -1,6 +1,6 @@
 //! Program-derived addresses, with their canonical bumps.
 
-use quotebook_core::accounts::{CONFIG_SEED, DELEGATE_SEED, MAKER_SEED, SERIES_SEED};
+use quotebook_core::accounts::{CONFIG_SEED, DELEGATE_SEED, MAKER_SEED, PROFILE_SEED, SERIES_SEED};
 use solana_address::Address;
 
 /// `Config`: `["config"]`.
@@ -41,6 +41,12 @@ pub fn delegate(program_id: &Address, maker: &Address) -> (Address, u8) {
     Address::find_program_address(&[DELEGATE_SEED, maker.as_ref()], program_id)
 }
 
+/// A maker's profile: `["profile", maker]` (ADR 0002).
+#[must_use]
+pub fn profile(program_id: &Address, maker: &Address) -> (Address, u8) {
+    Address::find_program_address(&[PROFILE_SEED, maker.as_ref()], program_id)
+}
+
 /// The program's `ProgramData` under the upgradeable loader, which `init_config` reads.
 #[must_use]
 pub fn program_data(program_id: &Address) -> (Address, u8) {
@@ -48,4 +54,21 @@ pub fn program_data(program_id: &Address) -> (Address, u8) {
         &[program_id.as_ref()],
         &solana_sdk_ids::bpf_loader_upgradeable::ID,
     )
+}
+
+/// The SPL Associated Token Account program.
+pub const ASSOCIATED_TOKEN_PROGRAM: Address =
+    solana_address::address!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+/// The canonical fee account of a quote mint (ADR 0001): the Config PDA's associated token
+/// account for `quote_mint` under `token_program`. Any token account of the quote mint owned by
+/// the Config PDA is accepted by `settle`; clients use this one by convention.
+#[must_use]
+pub fn fee_account(program_id: &Address, quote_mint: &Address, token_program: &Address) -> Address {
+    let owner = config(program_id).0;
+    Address::find_program_address(
+        &[owner.as_ref(), token_program.as_ref(), quote_mint.as_ref()],
+        &ASSOCIATED_TOKEN_PROGRAM,
+    )
+    .0
 }
