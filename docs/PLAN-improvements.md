@@ -1,6 +1,6 @@
 # quotebook: improvement plan
 
-Status: **draft r3, for Codex review**. GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
+Status: **draft r4, for Codex review**. GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
 Baseline: `main` at `4b3751f` (v0.1.1 on crates.io; program `3Aq1Aw…6mbo` on devnet, built
 from `898c173`). `docs/PLAN.md` stays the v1 design record; this file plans the work after v1.
 
@@ -275,8 +275,19 @@ Two layers. The fast one runs in `make pre-push`; the slow one runs on demand.
     status and logs, and returns events only when all of these hold:
     - the transaction succeeded, with no error in its meta;
     - the commitment is `finalized` (or the level the caller asks for);
-    - the record sits inside a `Program 3Aq1Aw… invoke [1]` … `success` frame of this
-      program's id, tracked through the invoke and return lines.
+    - the record was emitted by the configured quotebook program itself. `fill_events`
+      replays the invocation stack from the log lines:
+      - `Program <id> invoke [n]` pushes a frame;
+      - `Program <id> success` and `Program <id> failed: …` pop it.
+      A `Program data:` line is attributed to the frame on top of the stack. It is accepted
+      only when that frame's id is the configured program, at any depth: `settle` called by
+      CPI from another program is supported. A foreign program's bytes are always rejected,
+      even when that program is nested inside quotebook's own frame.
+    - the emitting frame closed with its matching `Program <id> success`. An event is
+      yielded only then.
+    If the stack does not balance, a frame is left open, or the logs carry the runtime's
+    `Log truncated` marker, `fill_events` returns `Incomplete` with the events it could
+    prove so far. It fails closed and never guesses.
     Each event's identity is (signature, index of the event within the transaction), so it
     can be deduplicated.
 - **Known limit, documented:**
@@ -292,7 +303,11 @@ Two layers. The fast one runs in `make pre-push`; the slow one runs on demand.
   - a spoofed emitter (a test program logging the same bytes) is rejected by
     `fill_events`;
   - a transaction of `settle` followed by a failing instruction yields no event from
-    `fill_events`.
+    `fill_events`;
+  - `settle` called by CPI from a test program at depth 2 yields its event;
+  - a foreign program's same bytes, emitted inside a nested frame, are rejected;
+  - logs cut before the success line, and logs carrying `Log truncated`, return
+    `Incomplete`.
 
 ### I8. TypeScript SDK checked against Rust vectors (M)
 
