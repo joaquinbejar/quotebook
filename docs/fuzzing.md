@@ -166,6 +166,77 @@ test in `quotebook-core/tests`.
 
 ### Results (2026-11-02, Studio, one hour per target)
 
+Each target ran for 3,601 s: no crash, no artifact. `quote_decode` and `accounts_decode` were
+rerun for an hour after they became structured targets (Codex review); the first table row
+of each is that rerun. The edge counts are not comparable across targets: the structured
+targets reach far more of the decoders than raw bytes did (28 and 29 edges before).
+
+| Target | Executions | Coverage (edges) | Corpus after `cargo fuzz cmin` |
+| --- | ---: | ---: | ---: |
+| `sigverify` | 312,643,553 | 433 | 213 inputs |
+| `quote_decode` (structured) | 387,346,157 | 345 | 178 inputs |
+| `instruction_args` | 3,336,695,269 | 137 | 43 inputs |
+| `accounts_decode` (structured) | 460,252,239 | 276 | 218 inputs |
+
+`make fuzz-check` replays every corpus and requires each accepting path and rejection:
+- `sigverify`: `Ok` 51, `MalformedSigVerify` 123, `MalformedQuote` 12, `SignerMismatch` 10,
+  `SigVerifyNotSelfContained` 9, `QuoteLengthMismatch` 4, `WrongDomain` 4;
+- `quote_decode`: `Ok` 56, `QuoteLengthMismatch` 92, `WrongDomain` 19, `MalformedQuote` 11;
+- `accounts_decode`: `Config` 33, `MakerState` 11, `Series` 7, rejected 167;
+- `instruction_args`: every decoder accepts at least once (`Tag` 38, `u64` 8, `new_admin` 6,
+  `SettleArgs` 3, `paused` 2, `CreateSeriesArgs` 1, `deployment_id` 1).
+
+### Failing controls
+
+Each control was a temporary edit to `program/src/processor/settle.rs`, rebuilt and run at
+24 cases, then reverted:
+
+| Control | Caught by |
+| --- | --- |
+| `amounts` off by one lot (`(fill + 1) × base_lot`) | step 2, the amount of a token account: 1,000,000,016,000 observed vs 1,000,000,015,000 modelled |
+| Nonce check disabled (`consume` removed) | step 2, the used count of the maker's window: 1 observed vs 2 modelled |
+| `settle` always rejects | step 0, the outcome: `Overflow` observed vs the predicted error |
+
+## 2. libFuzzer targets (`fuzz/`)
+
+`fuzz/` is its own Cargo workspace (`exclude = ["fuzz"]` at the root) on `nightly-2026-10-11`,
+pinned in `fuzz/rust-toolchain.toml`. cargo-fuzz needs nightly, and the main workspace stays on
+stable: this is the rule exception the plan approved. The dependencies are `libfuzzer-sys` 0.4,
+`arbitrary` 1.5 and `bytemuck` 1.25, and only `fuzz/` uses them.
+
+| Target | Input | Oracle |
+| --- | --- | --- |
+| `sigverify` | raw bytes, or a valid record built by `sigverify::instruction_data` from arbitrary terms and then edited: the count, any of the 7 offset fields, any byte, a message byte, the public key, a truncation, extra bytes | `fuzz/src/lib.rs::reference_verified_quote` is an independent parser written from docs/PLAN.md 4.1. It predicts accept or the exact error: the count, the padding and record length, the three `0xFFFF` indexes, `message_data_size == 208`, the three ranges, the quote decode, and public key == `quote.maker`. The target asserts equality, and on accept that the quote re-encodes to the message bytes and that its maker is the verified key. |
+| `quote_decode` | arbitrary bytes | a reference decode predicts the exact error; accept implies `encode(decode(x)) == x` |
+| `instruction_args` | arbitrary bytes | `Tag::split` and each argument decoder accept exactly the documented inputs, and every encoder round-trips |
+| `accounts_decode` | arbitrary bytes | `accounts::decode::<T>` accepts exactly the right length, tag and version for `Config`, `Series` and `MakerState`, and re-encodes to the same bytes |
+
+`fuzz/tests/corpus_coverage.rs` (`make fuzz-check`) replays the committed `sigverify` corpus
+and fails unless every outcome of `verified_quote` occurs:
+
+- `Ok`;
+- `MalformedSigVerify`;
+- `SigVerifyNotSelfContained`;
+- `QuoteLengthMismatch`;
+- `WrongDomain`;
+- `MalformedQuote`;
+- `SignerMismatch`.
+
+So a corpus that only ever reaches the first length check cannot pass.
+
+### How to run
+
+```sh
+make fuzz                 # each target for FUZZ_TIME seconds (default 60), grows fuzz/corpus
+make fuzz-check           # replay the corpus (-runs=0) and the sigverify branch coverage
+make fuzz-long            # one hour per target, then 10,000 conservation sequences
+```
+
+A crash leaves its input in `fuzz/artifacts/<target>/`. The fix comes with a stable regression
+test in `quotebook-core/tests`.
+
+### Results (2026-11-02, Studio, one hour per target)
+
 All four targets ran for 3,601 s each, in parallel: no crash, no artifact.
 
 | Target | Executions | Coverage (edges) | Corpus after `cargo fuzz cmin` |
