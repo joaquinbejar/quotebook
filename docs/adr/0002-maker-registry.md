@@ -36,9 +36,11 @@ Validation, in the program and in the client decoder:
 - `name`:
   - 0 to 32 bytes;
   - printable ASCII, space allowed (0x20 to 0x7E).
-- The bytes past each length are zero. This keeps the encoding canonical, as I6's decoders
-  require.
-- Anything else fails with the new error `InvalidProfile` (135).
+- **Canonical bytes:** every byte that carries no data is zero. That covers the header's
+  `_pad`, the profile's `_pad`, and the tails of `endpoint` and `name` past their lengths. This
+  keeps the encoding canonical, as I6's decoders require. The decoder checks it, and so does
+  the program on every write.
+- Anything else fails with the new error `InvalidProfile` (134).
 
 ### Instructions
 
@@ -50,8 +52,7 @@ Validation, in the program and in the client decoder:
     3. `[writable]` profile;
     4. `[]` system program.
   - It creates the profile if it is missing, with the same pre-funding-safe creation as
-    `init_maker`, or overwrites it. The PDA is derived from the signer, so a maker can only
-    write its own profile.
+    `init_maker`, or overwrites it.
 - **`close_profile` (tag 10).**
   - Accounts:
     1. `[signer]` maker;
@@ -59,6 +60,15 @@ Validation, in the program and in the client decoder:
     3. `[writable]` lamport destination.
   - It zeroes the data and returns the rent. Closing is safe, unlike `MakerState`, because the
     profile holds no replay state: re-creating it later only re-publishes an endpoint.
+- **Ownership checks.** On an existing profile, both an update and a close verify all of
+  these:
+  - it is owned by quotebook;
+  - the tag is 4 and the version is 1;
+  - the address re-derives as `["profile", signer]` with the stored bump;
+  - the stored `maker` equals the signer.
+  Any mismatch fails with `InvalidPda` or `NotAuthority`. A maker can therefore only create,
+  update or close its own profile, and a substituted account (another maker's profile, or a
+  forged account at the right address) is rejected.
 
 ### Discovery and curation
 
@@ -80,8 +90,17 @@ Validation, in the program and in the client decoder:
   - create, update and close;
   - a pre-funded PDA;
   - a profile written by a non-maker signer fails with `InvalidPda`;
-  - each `InvalidProfile` rule at its boundaries: endpoint lengths 6/7 and 128/129, a missing
-    `wss://`, a space or a control byte, non-zero padding, a name of 32/33 bytes.
+  - an unauthorized close fails: another signer, or the right signer with another maker's
+    profile;
+  - a substituted profile on update and on close fails: a forged account owned by quotebook at
+    the right address with the wrong tag, version or stored maker, and an account not owned by
+    quotebook;
+  - each `InvalidProfile` rule at its boundaries:
+    - endpoint lengths 6/7 and 128/129;
+    - a missing `wss://`;
+    - a space or a control byte;
+    - non-zero bytes in either `_pad` or in either text tail;
+    - a name of 32/33 bytes.
 - **Contention:** `settle` does not take the profile, checked by an account-list test.
 - **Decoder fuzzing:** the profile decoder joins I6's `accounts_decode` target, as a structured
   layout with an accepting path.
@@ -103,6 +122,7 @@ Validation, in the program and in the client decoder:
 
 ## Consequences
 
-- Two new instructions (`set_profile`, `close_profile`) and one account type, plus error 135. `settle` and every v1 account
+- Two new instructions (`set_profile`, `close_profile`) and one account type, plus error 134
+  (`InvalidProfile`; the fee ADR takes 132 and 133). `settle` and every v1 account
   are unchanged, so it is a compatible upgrade ([`governance.md`](../governance.md)).
 - The registry joins the audit scope's "in scope" table at the freeze (I5).

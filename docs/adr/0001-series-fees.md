@@ -9,6 +9,11 @@ Codex and SOLANA-PROJECTS; no code is written before both accept it.
 - the devnet default is 0;
 - the fee is an immutable per-series parameter.
 
+Further decisions (msg 45344):
+- the fee rounds down (floor), in the taker's favour;
+- a fee of 0 on tiny fills is acceptable;
+- both ADRs are OK, pending Codex.
+
 ## Context
 
 v1 has no fee (PLAN open question 1). A series is created by the admin and never changes its
@@ -24,10 +29,14 @@ zero in every series ever created.
 reserved and must be zero.
 
 - **No migration:** every existing series reads `fee_bps = 0`. The account `VERSION` stays 1.
-- **`create_series` arguments** grow from 32 to 34 bytes: the four v1 fields, then `fee_bps:
-  u16`.
-  - The decoder accepts both lengths: 32 bytes means `fee_bps = 0`, so v1 clients still work.
-  - Each length is canonical, and encode/decode round-trip at both lengths.
+- **`create_series` arguments** gain an optional fee. `CreateSeriesArgs` keeps the four v1
+  fields and adds `fee_bps: Option<u16>`:
+  - `None` is the v1 32-byte encoding, so old clients still work;
+  - `Some(b)` is the 34-byte encoding (the four fields, then `b` little-endian), `Some(0)`
+    included.
+  - The encoding length is part of the value. So decode accepts exactly the two forms, and
+    `encode(decode(x)) == x` holds for both: there is no normalization (Codex, ADR review).
+  - The series stores `fee_bps.unwrap_or(0)`.
   - `fee_bps > MAX_FEE_BPS` (100) fails with the new error `FeeTooHigh` (132).
 - **No instruction ever writes `fee_bps` after creation.** That is the immutability.
 
@@ -43,7 +52,7 @@ exactly the quoted ones on both sides.
 
 ```text
 quote_atoms = price × fill × quote_lot_size            (as v1, checked u128 → u64)
-fee         = ceil(quote_atoms × fee_bps / 10,000)     (checked u128; rounded against the taker)
+fee         = floor(quote_atoms × fee_bps / 10,000)    (checked u128; rounded in the taker's favour)
 ```
 
 | Side (maker's) | Maker | Taker | Fee account |
@@ -51,10 +60,14 @@ fee         = ceil(quote_atoms × fee_bps / 10,000)     (checked u128; rounded a
 | Ask (maker sells base) | pays `base_atoms` (delegate), receives `quote_atoms` | receives `base_atoms`, pays `quote_atoms + fee` | receives `fee` from the taker |
 | Bid (maker buys base) | receives `base_atoms`, pays `quote_atoms` (delegate) | pays `base_atoms`, receives `quote_atoms - fee` | receives `fee` from the maker's delegate transfer, out of the maker's `quote_atoms` |
 
-- **Bid, nothing left for the taker:** if `quote_atoms - fee` would be 0, `settle` fails with
-  the new error `FeeExceedsProceeds` (133). A taker must never sell base for nothing. With
-  `fee_bps <= 100`, this happens only when `quote_atoms < 100`, a dust fill of a badly lotted
-  series.
+- **Rounding:** the fee rounds **down**, in the taker's favour (SOLANA-PROJECTS, msg 45344).
+  The computation is checked: `quote_atoms × fee_bps` in `u128`, then the division.
+- **Fee 0 on tiny fills is accepted (documented).** With `0 < fee_bps` and
+  `quote_atoms × fee_bps < 10,000`, the fee is 0. For example at 100 bps, any fill below 100
+  quote atoms pays no fee. Lot sizes make this a dust case.
+- **The taker's Bid proceeds are always positive:** `fee <= floor(quote_atoms / 100) <
+  quote_atoms` for `quote_atoms >= 1`. The `FeeExceedsProceeds` error proposed earlier cannot
+  occur, so it is dropped. The subtraction `quote_atoms - fee` stays checked.
 - **`fee_bps = 0`:** no third transfer and no extra account. `settle`'s accounts and amounts
   are exactly v1's.
 - **The maker's allowance** drops by exactly its quoted outflow on both sides (`base_atoms` on
@@ -93,16 +106,19 @@ There is a new instruction, `withdraw_fees` (tag 8).
   - the Config PDA re-derives;
   - the fee account passes the `settle` checks above;
   - the destination is any initialized token account of the same mint and program;
-  - `amount <= balance`, which fails with `InsufficientFees` (134). It is checked before the
+  - `amount <= balance`, which fails with `InsufficientFees` (133). It is checked before the
     CPI, for a clear error.
 - **Transfer:** `transfer_checked` signed with the Config PDA's seeds.
 
 ## Tests and measurements
 
-- **Amounts:** unit and property tests of `fee` and `quote_atoms - fee`:
-  - rounding is up;
-  - the arithmetic is checked;
-  - the `FeeExceedsProceeds` edge.
+- **Amounts:** unit and property tests of `fee` and `quote_atoms - fee`, against an exact
+  rational reference:
+  - the floor;
+  - checked arithmetic at `u64::MAX` notional;
+  - the rounding boundary: at 100 bps, `quote_atoms = 99` pays 0, `100` pays 1, `199` pays 1
+    and `200` pays 2; the same at 1 bp around 10,000;
+  - Bid proceeds are always at least 1.
 - **Settle:** LiteSVM tests with fee 0 and fee > 0, both sides, SPL Token and Token-2022, with
   exact balances for all five accounts. Negative tests for each check on the fee account:
   - missing;
@@ -142,6 +158,7 @@ There is a new instruction, `withdraw_fees` (tag 8).
 - A compatible upgrade in the sense of [`governance.md`](../governance.md): the v1 quote
   contract is unchanged, and every series created before has fee 0, so it behaves exactly as
   before.
-- New error codes 132 to 134 are appended, and existing codes keep their values.
+- New error codes 132 (`FeeTooHigh`) and 133 (`InsufficientFees`) are appended, and existing
+  codes keep their values.
 - The fee path joins the audit scope ([`audit-scope.md`](../audit-scope.md), question 5) before
   the freeze.
