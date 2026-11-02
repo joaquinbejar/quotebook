@@ -5,7 +5,16 @@ Milestone I2 of [`PLAN-improvements.md`](PLAN-improvements.md): anyone can rebui
 
 program-sha256: `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776`
 
-That line is the SHA-256 of `target/verifiable/quotebook_program.so` built by
+program-executable-hash: `fe989e9923369050be9c8e266173656fe24aebe9061c9a7d13f3a86ae22d418c`
+
+The two hashes are different things:
+- `program-sha256` is the plain SHA-256 of the artifact.
+- `program-executable-hash` is what `solana-verify get-executable-hash` prints for it, and so
+  what `get-program-hash` must print for the deployed program. It hashes the bytes with the
+  trailing zero bytes trimmed. This artifact ends in 15 zero bytes, which is why the two
+  differ.
+
+The `program-sha256` line is the SHA-256 of `target/verifiable/quotebook_program.so` built by
 `make verifiable` from the current tree. CI's `verifiable` job rebuilds it and fails if the
 hash differs (`make verifiable-check`), so a change to the program updates this line in the
 same PR, as `bench` does for `docs/benchmarks.md`.
