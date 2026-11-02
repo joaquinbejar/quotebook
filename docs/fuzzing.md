@@ -225,14 +225,23 @@ targets reach far more of the decoders than raw bytes did (28 and 29 edges befor
 | `quote_decode` (structured) | 387,346,157 | 345 | 178 inputs |
 | `instruction_args` | 3,336,695,269 | 137 | 43 inputs |
 | `accounts_decode` (structured) | 460,252,239 | 276 | 218 inputs |
+| `instruction_args`, I10 (tags 8 to 10, fee args, `ProfileArgs`) | 1,685,936,597 | 209 | 56 inputs |
+| `accounts_decode`, I10 (with `MakerProfile` and the canonical rule) | 411,005,968 | 542 | 301 inputs |
+
+The two I10 rows are hour reruns (3,601 s each, in parallel, no crash, no artifact) of the
+targets extended for fees and profiles, started from their earlier corpora plus seeds for the
+new decoders; each corpus was minimized again after the run.
 
 `make fuzz-check` replays every corpus and requires each accepting path and rejection:
 - `sigverify`: `Ok` 51, `MalformedSigVerify` 123, `MalformedQuote` 12, `SignerMismatch` 10,
   `SigVerifyNotSelfContained` 9, `QuoteLengthMismatch` 4, `WrongDomain` 4;
 - `quote_decode`: `Ok` 56, `QuoteLengthMismatch` 92, `WrongDomain` 19, `MalformedQuote` 11;
-- `accounts_decode`: `Config` 33, `MakerState` 11, `Series` 7, rejected 167;
-- `instruction_args`: every decoder accepts at least once (`Tag` 38, `u64` 8, `new_admin` 6,
-  `SettleArgs` 3, `paused` 2, `CreateSeriesArgs` 1, `deployment_id` 1).
+- `accounts_decode` (after I10): `MakerProfile` 73, `MakerProfileNonCanonical` 35,
+  `MakerState` 15, `Config` 12, `Series` 4, rejected 162;
+- `instruction_args` (after I10): every decoder accepts at least once (`Tag` 46, of which an
+  I10 tag 8; `ProfileArgs` 8 and `InvalidProfile` 17; `deployment_id` 5; `new_admin` 4;
+  `SettleArgs` 3; `u64` 3; `CreateSeriesArgs` 2, `FeeTooHigh` 2 and with a fee 1; `paused`
+  2).
 
 ### Failing control
 
