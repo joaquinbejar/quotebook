@@ -86,7 +86,14 @@ fn accounts_decode_corpus_accepts_every_type() {
     let counts = replay::<AccountInput>("accounts_decode", |i| {
         check_accounts(&i.bytes()).to_string()
     });
-    for k in ["Config", "Series", "MakerState", "None"] {
+    for k in [
+        "Config",
+        "Series",
+        "MakerState",
+        "MakerProfile",
+        "MakerProfileNonCanonical",
+        "None",
+    ] {
         assert!(counts.contains_key(k), "corpus never reaches {k}");
     }
 }
@@ -97,6 +104,7 @@ fn instruction_args_corpus_accepts_every_decoder() {
         decode_deployment_id, decode_new_admin, decode_paused, decode_u64, CreateSeriesArgs,
         SettleArgs, Tag,
     };
+    use quotebook_core::profile::ProfileArgs;
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus/instruction_args");
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for entry in std::fs::read_dir(&dir).expect("corpus exists") {
@@ -104,6 +112,20 @@ fn instruction_args_corpus_accepts_every_decoder() {
         let hits = [
             ("Tag", Tag::split(&d).is_ok()),
             ("CreateSeriesArgs", CreateSeriesArgs::decode(&d).is_ok()),
+            (
+                "CreateSeriesArgs+fee",
+                CreateSeriesArgs::decode(&d).is_ok_and(|a| a.fee_bps.is_some()),
+            ),
+            (
+                "CreateSeriesArgs FeeTooHigh",
+                CreateSeriesArgs::decode(&d) == Err(E::FeeTooHigh),
+            ),
+            ("Tag I10", Tag::split(&d).is_ok_and(|(t, _)| t as u8 >= 8)),
+            ("ProfileArgs", ProfileArgs::decode(&d).is_ok()),
+            (
+                "ProfileArgs InvalidProfile",
+                ProfileArgs::decode(&d) == Err(E::InvalidProfile),
+            ),
             ("SettleArgs", SettleArgs::decode(&d).is_ok()),
             ("u64", decode_u64(&d).is_ok()),
             ("deployment_id", decode_deployment_id(&d).is_ok()),
@@ -119,7 +141,12 @@ fn instruction_args_corpus_accepts_every_decoder() {
     println!("instruction_args corpus accepting paths: {counts:#?}");
     for k in [
         "Tag",
+        "Tag I10",
         "CreateSeriesArgs",
+        "CreateSeriesArgs+fee",
+        "CreateSeriesArgs FeeTooHigh",
+        "ProfileArgs",
+        "ProfileArgs InvalidProfile",
         "SettleArgs",
         "u64",
         "deployment_id",

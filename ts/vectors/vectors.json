@@ -90,6 +90,82 @@
           }
         ],
         "data": "06000300000000000000"
+      },
+      "settle_with_fee": {
+        "program_id": "6URwbPipuA4MJLG7LCRRZuWnms3JZ9cRG3z9indXWz8G",
+        "accounts": [
+          {
+            "pubkey": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+            "is_signer": true,
+            "is_writable": false
+          },
+          {
+            "pubkey": "73rhNrKTBdwn9YFVwUsnKFGdgDth1jNHfToegXQ5HR5S",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "AR2NbL1RW9yT3qYnZM3ipRCotPgrtfJNQYnzuUjDtJ9G",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "GarCJQLSkCa6tHWSFC5veZYoCWRfKEPBJjn55QtsRGmy",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "5WcE8o73vmsSZXeeWTLm3ty3fAJKCnBWRF6VuKUme5nu",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "6JhaGdekBjU2RfiYWSjYdQAibx4LfSfTNFEeMUHnUVz7",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "AB3FQHskSYuWVw4M9EpGdxNzrAjBNiYGpbH4CVzLFene",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "Bow1CGKGDB9mNxeWdw85E2aCthQ1oZX4oFEe7fYT17ew",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "FMUEmtxhU46GzhKF4FW9MLJdQWiLgjiXP9TYRWSrqTpV",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "6TcyBfPdBt1kjsvDZLzmBFnuMaLWiTaAt4RjUr9VA5YD",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "Sysvar1nstructions1111111111111111111111111",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "9ySrgR6tsLvjxEBJN3wQp5oDTQqPYGzyBLJRbHaPqqZG",
+            "is_signer": false,
+            "is_writable": true
+          }
+        ],
+        "data": "06000300000000000000"
       }
     },
     {
@@ -178,6 +254,82 @@
             "pubkey": "Sysvar1nstructions1111111111111111111111111",
             "is_signer": false,
             "is_writable": false
+          }
+        ],
+        "data": "0607ffffffffffffffff"
+      },
+      "settle_with_fee": {
+        "program_id": "6URwbPipuA4MJLG7LCRRZuWnms3JZ9cRG3z9indXWz8G",
+        "accounts": [
+          {
+            "pubkey": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+            "is_signer": true,
+            "is_writable": false
+          },
+          {
+            "pubkey": "73rhNrKTBdwn9YFVwUsnKFGdgDth1jNHfToegXQ5HR5S",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "AR2NbL1RW9yT3qYnZM3ipRCotPgrtfJNQYnzuUjDtJ9G",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "GarCJQLSkCa6tHWSFC5veZYoCWRfKEPBJjn55QtsRGmy",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "5WcE8o73vmsSZXeeWTLm3ty3fAJKCnBWRF6VuKUme5nu",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "6JhaGdekBjU2RfiYWSjYdQAibx4LfSfTNFEeMUHnUVz7",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "AB3FQHskSYuWVw4M9EpGdxNzrAjBNiYGpbH4CVzLFene",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "Bow1CGKGDB9mNxeWdw85E2aCthQ1oZX4oFEe7fYT17ew",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "FMUEmtxhU46GzhKF4FW9MLJdQWiLgjiXP9TYRWSrqTpV",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "6TcyBfPdBt1kjsvDZLzmBFnuMaLWiTaAt4RjUr9VA5YD",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "Sysvar1nstructions1111111111111111111111111",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "9ySrgR6tsLvjxEBJN3wQp5oDTQqPYGzyBLJRbHaPqqZG",
+            "is_signer": false,
+            "is_writable": true
           }
         ],
         "data": "0607ffffffffffffffff"
@@ -272,6 +424,82 @@
           }
         ],
         "data": "06010100000000000000"
+      },
+      "settle_with_fee": {
+        "program_id": "6URwbPipuA4MJLG7LCRRZuWnms3JZ9cRG3z9indXWz8G",
+        "accounts": [
+          {
+            "pubkey": "mBKqcnGotbsSb5vNrdyhzZ5EhqZdids9QYiTRckvi7v",
+            "is_signer": true,
+            "is_writable": false
+          },
+          {
+            "pubkey": "73rhNrKTBdwn9YFVwUsnKFGdgDth1jNHfToegXQ5HR5S",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "AR2NbL1RW9yT3qYnZM3ipRCotPgrtfJNQYnzuUjDtJ9G",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "GarCJQLSkCa6tHWSFC5veZYoCWRfKEPBJjn55QtsRGmy",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "5WcE8o73vmsSZXeeWTLm3ty3fAJKCnBWRF6VuKUme5nu",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "6JhaGdekBjU2RfiYWSjYdQAibx4LfSfTNFEeMUHnUVz7",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "AB3FQHskSYuWVw4M9EpGdxNzrAjBNiYGpbH4CVzLFene",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "Bow1CGKGDB9mNxeWdw85E2aCthQ1oZX4oFEe7fYT17ew",
+            "is_signer": false,
+            "is_writable": true
+          },
+          {
+            "pubkey": "FMUEmtxhU46GzhKF4FW9MLJdQWiLgjiXP9TYRWSrqTpV",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "6TcyBfPdBt1kjsvDZLzmBFnuMaLWiTaAt4RjUr9VA5YD",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "Sysvar1nstructions1111111111111111111111111",
+            "is_signer": false,
+            "is_writable": false
+          },
+          {
+            "pubkey": "9ySrgR6tsLvjxEBJN3wQp5oDTQqPYGzyBLJRbHaPqqZG",
+            "is_signer": false,
+            "is_writable": true
+          }
+        ],
+        "data": "06010100000000000000"
       }
     }
   ],
@@ -324,6 +552,18 @@
       "maker": "7v54NWdBtkjuAFJrLGsS2SXnuk8nKam81mZJeeYxVFi9",
       "address": "GarCJQLSkCa6tHWSFC5veZYoCWRfKEPBJjn55QtsRGmy",
       "bump": 252
+    },
+    {
+      "kind": "profile",
+      "maker": "7v54NWdBtkjuAFJrLGsS2SXnuk8nKam81mZJeeYxVFi9",
+      "address": "G2BjUpiRtEZWDzeJzPiD6uyNz6kUzzoNo9GZcn4M79NB",
+      "bump": 246
+    },
+    {
+      "kind": "fee_account",
+      "quote_mint": "6TcyBfPdBt1kjsvDZLzmBFnuMaLWiTaAt4RjUr9VA5YD",
+      "token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "address": "9ySrgR6tsLvjxEBJN3wQp5oDTQqPYGzyBLJRbHaPqqZG"
     }
   ],
   "accounts": {
@@ -335,7 +575,7 @@
       "deployment_id": "07070707070707070707070707070707"
     },
     "series": {
-      "data": "0201fd0000000000000000000000000007070707070707070707070707070707d54207da194977dcf46adbfec2bc2e75b52d5a8a42184fedfdc00024f0e3e8da511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a640000000000000001000000000000003c00000000000000010000000000000001000100000000000000000000000000",
+      "data": "0201fd0000000000000000000000000007070707070707070707070707070707d54207da194977dcf46adbfec2bc2e75b52d5a8a42184fedfdc00024f0e3e8da511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8a640000000000000001000000000000003c00000000000000010000000000000001000100000000002500000000000000",
       "bump": 253,
       "series_index": "0",
       "deployment_id": "07070707070707070707070707070707",
@@ -347,7 +587,8 @@
       "min_size": "1",
       "paused": true,
       "base_is_2022": false,
-      "quote_is_2022": true
+      "quote_is_2022": true,
+      "fee_bps": 37
     },
     "maker_state": {
       "data": "0301fe000000000066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a0400000000000000fc00000000000000020000000000000002000000000000000400000000000000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
@@ -411,8 +652,52 @@
           "result": "ok"
         }
       ]
+    },
+    "maker_profile": {
+      "data": "0401f6000000000066be7e332c7a453332bd9d0a7f7db055f5c5ef1a06ada66d98b39fb6810c473a1c0c0000000000007773733a2f2f6d616b65722e6578616d706c653a393030302f726671000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004578616d706c65206465736b0000000000000000000000000000000000000000",
+      "bump": 246,
+      "maker": "7v54NWdBtkjuAFJrLGsS2SXnuk8nKam81mZJeeYxVFi9",
+      "endpoint": "wss://maker.example:9000/rfq",
+      "name": "Example desk"
     }
   },
+  "fees": [
+    {
+      "quote_atoms": "0",
+      "fee_bps": 100,
+      "fee": "0"
+    },
+    {
+      "quote_atoms": "99",
+      "fee_bps": 100,
+      "fee": "0"
+    },
+    {
+      "quote_atoms": "100",
+      "fee_bps": 100,
+      "fee": "1"
+    },
+    {
+      "quote_atoms": "10000",
+      "fee_bps": 37,
+      "fee": "37"
+    },
+    {
+      "quote_atoms": "1000000",
+      "fee_bps": 1,
+      "fee": "100"
+    },
+    {
+      "quote_atoms": "18446744073709551615",
+      "fee_bps": 100,
+      "fee": "184467440737095516"
+    },
+    {
+      "quote_atoms": "18446744073709551615",
+      "fee_bps": 0,
+      "fee": "0"
+    }
+  ],
   "fill_events": [
     {
       "series": "73rhNrKTBdwn9YFVwUsnKFGdgDth1jNHfToegXQ5HR5S",

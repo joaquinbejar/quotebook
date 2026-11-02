@@ -97,6 +97,8 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
         s.paused = 0;
         s.base_is_2022 = u8::from(base_is_2022);
         s.quote_is_2022 = u8::from(quote_is_2022);
+        // Immutable from here: no instruction writes it again (ADR 0001).
+        s.fee_bps = args.fee_bps.unwrap_or(0).to_le_bytes();
     })?;
     cfg.series_count = index
         .checked_add(1)

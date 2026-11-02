@@ -76,6 +76,28 @@ impl Rpc for LiteRpc {
     fn genesis_hash(&mut self) -> Result<Hash, CliError> {
         Ok(Hash::new_from_array(GENESIS))
     }
+
+    /// `getProgramAccounts` with the same filters, over every account LiteSVM holds.
+    fn program_accounts(
+        &mut self,
+        program_id: &Address,
+        data_size: u64,
+        tag: u8,
+    ) -> Result<Vec<(Address, Account)>, CliError> {
+        use solana_account::ReadableAccount;
+        Ok(self
+            .svm
+            .accounts_db()
+            .inner
+            .iter()
+            .filter(|(_, a)| {
+                a.owner() == program_id
+                    && a.data().len() as u64 == data_size
+                    && a.data().first() == Some(&tag)
+            })
+            .map(|(k, a)| (*k, Account::from(a.clone())))
+            .collect())
+    }
 }
 
 impl LiteRpc {
@@ -177,6 +199,7 @@ pub fn setup() -> Setup {
         quote_lot_size: 100,
         max_quote_ttl: 60,
         min_size: 1,
+        fee_bps: None,
     };
     let (series, _) = admin::create_series(
         &mut rpc,

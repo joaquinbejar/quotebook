@@ -1,7 +1,7 @@
 # ADR 0002: a permissionless on-chain maker registry
 
-**Status:** proposed (I10 of [`PLAN-improvements.md`](../PLAN-improvements.md)). For review by
-Codex and SOLANA-PROJECTS before any code.
+**Status:** accepted (I10 of [`PLAN-improvements.md`](../PLAN-improvements.md)): accepted by
+Codex and SOLANA-PROJECTS (PR #31), implemented in the I10 code PR.
 
 ## Context
 

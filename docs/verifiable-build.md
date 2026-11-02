@@ -3,9 +3,9 @@
 Milestone I2 of [`PLAN-improvements.md`](PLAN-improvements.md): anyone can rebuild
 `quotebook-program` from a commit, get the same bytes, and compare them with what is deployed.
 
-program-sha256: `e03755a76238fee9decab465a108a8ef3bf8790323a2d5596a88b2179ea3d072`
+program-sha256: `4748d02454e5045ec06f8dec1ea2e5575ce28c7f4ab56b64dda46c1a9626c87a`
 
-program-executable-hash: `0744c011377a3a330862d4b38885f994883874a7536d15b6f3488fc1a57197ca`
+program-executable-hash: `a5287763e1c93463d7f52b5850129ee5be870328e489d513c47d693182d47f4d`
 
 The two hashes are different things:
 - `program-sha256` is the plain SHA-256 of the artifact.
@@ -95,6 +95,8 @@ one-line change. Its output must match the hash above before the switch.
 | `92cdd22` (main) | `scripts/verifiable/build.sh`, twice, on the Studio | `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776` | byte-identical runs. Equal to `898c173`: the program and core code is the same, and the 0.1.1 version bump does not reach the binary |
 | `92cdd22` (main) | CI `verifiable` job on a GitHub runner, native amd64 (run 41416573833) | `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776` | the same bytes on a second machine |
 | `e65b159` (I7, fill event) | `scripts/verifiable/build.sh` on the Studio | `e03755a76238fee9decab465a108a8ef3bf8790323a2d5596a88b2179ea3d072` | executable hash `0744c011377a3a330862d4b38885f994883874a7536d15b6f3488fc1a57197ca`. Not deployed: devnet keeps `a6a324f0…` until the I10 upgrade |
+| `99707f1` (I10, fees and registry) | `scripts/verifiable/build.sh` on the Studio | `650d393fc0a1b9b0c6b93375a03f85245d450961abedd0f5d71b371910a73039` | executable hash `669eb65a8e61dd47f2efed1e4d1297ef80c54772b05d1575351dd748a0ec7085`. Superseded by the next row before the merge; never deployed |
+| `8fb4ffb` (I10, only an Ask forms `quote_atoms + fee`, Codex I10-02) | `scripts/verifiable/build.sh` on the Studio | `4748d02454e5045ec06f8dec1ea2e5575ce28c7f4ab56b64dda46c1a9626c87a` | executable hash `a5287763e1c93463d7f52b5850129ee5be870328e489d513c47d693182d47f4d`. The devnet upgrade follows the merge |
 
 ## Devnet upgrade to the reproducible binary (2026-11-02)
 

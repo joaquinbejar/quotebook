@@ -66,7 +66,7 @@ pub fn create_series(
     let series = pda::series(program_id, base_mint, quote_mint, series_index).0;
     Instruction::new_with_bytes(
         *program_id,
-        &data(Tag::CreateSeries, &args.encode()),
+        &data(Tag::CreateSeries, args.encode().as_slice()),
         vec![
             AccountMeta::new_readonly(*admin, true),
             AccountMeta::new(*payer, true),
@@ -157,6 +157,9 @@ pub struct SettleAccounts {
     pub taker_base: Address,
     /// The taker's quote token account.
     pub taker_quote: Address,
+    /// The fee account (ADR 0001): a token account of the quote mint owned by the Config PDA.
+    /// Required when the series charges a fee (`fee_bps > 0`), ignored otherwise.
+    pub fee_account: Option<Address>,
 }
 
 /// `settle` for `quote`, reading the precompile instruction at `sig_ix_index`. The series,
@@ -192,6 +195,35 @@ pub fn settle(
             AccountMeta::new_readonly(a.base_token_program, false),
             AccountMeta::new_readonly(a.quote_token_program, false),
             AccountMeta::new_readonly(sysvar::instructions::ID, false),
+        ]
+        .into_iter()
+        .chain(a.fee_account.map(|f| AccountMeta::new(f, false)))
+        .collect(),
+    )
+}
+
+/// `withdraw_fees` (ADR 0001): the admin moves `amount` quote atoms from a Config-owned fee
+/// account to `destination`.
+#[must_use]
+pub fn withdraw_fees(
+    program_id: &Address,
+    admin: &Address,
+    fee_account: &Address,
+    destination: &Address,
+    quote_mint: &Address,
+    token_program: &Address,
+    amount: u64,
+) -> Instruction {
+    Instruction::new_with_bytes(
+        *program_id,
+        &data(Tag::WithdrawFees, &amount.to_le_bytes()),
+        vec![
+            AccountMeta::new_readonly(*admin, true),
+            AccountMeta::new_readonly(pda::config(program_id).0, false),
+            AccountMeta::new(*fee_account, false),
+            AccountMeta::new(*destination, false),
+            AccountMeta::new_readonly(*quote_mint, false),
+            AccountMeta::new_readonly(*token_program, false),
         ],
     )
 }
@@ -232,6 +264,67 @@ pub fn revoke_delegate(token_program: &Address, source: &Address, owner: &Addres
         vec![
             AccountMeta::new(*source, false),
             AccountMeta::new_readonly(*owner, true),
+        ],
+    )
+}
+
+/// Creates the canonical fee account ([`pda::fee_account`]) if it does not exist: the
+/// Associated Token Account program's `CreateIdempotent` (tag 1) for the Config PDA. Anyone
+/// may pay for it.
+#[must_use]
+pub fn create_fee_account(
+    program_id: &Address,
+    payer: &Address,
+    quote_mint: &Address,
+    token_program: &Address,
+) -> Instruction {
+    Instruction::new_with_bytes(
+        pda::ASSOCIATED_TOKEN_PROGRAM,
+        &[1],
+        vec![
+            AccountMeta::new(*payer, true),
+            AccountMeta::new(
+                pda::fee_account(program_id, quote_mint, token_program),
+                false,
+            ),
+            AccountMeta::new_readonly(pda::config(program_id).0, false),
+            AccountMeta::new_readonly(*quote_mint, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(*token_program, false),
+        ],
+    )
+}
+
+/// `set_profile` (ADR 0002): create or update the maker's profile.
+#[must_use]
+pub fn set_profile(
+    program_id: &Address,
+    maker: &Address,
+    payer: &Address,
+    args: &quotebook_core::profile::ProfileArgs,
+) -> Instruction {
+    Instruction::new_with_bytes(
+        *program_id,
+        &data(Tag::SetProfile, args.encode().as_slice()),
+        vec![
+            AccountMeta::new_readonly(*maker, true),
+            AccountMeta::new(*payer, true),
+            AccountMeta::new(pda::profile(program_id, maker).0, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+    )
+}
+
+/// `close_profile` (ADR 0002): close the maker's profile, rent to `destination`.
+#[must_use]
+pub fn close_profile(program_id: &Address, maker: &Address, destination: &Address) -> Instruction {
+    Instruction::new_with_bytes(
+        *program_id,
+        &data(Tag::CloseProfile, &[]),
+        vec![
+            AccountMeta::new_readonly(*maker, true),
+            AccountMeta::new(pda::profile(program_id, maker).0, false),
+            AccountMeta::new(*destination, false),
         ],
     )
 }

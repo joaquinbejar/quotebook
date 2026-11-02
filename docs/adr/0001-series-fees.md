@@ -1,7 +1,7 @@
 # ADR 0001: immutable per-series taker fees
 
-**Status:** proposed (I10 of [`PLAN-improvements.md`](../PLAN-improvements.md)). For review by
-Codex and SOLANA-PROJECTS; no code is written before both accept it.
+**Status:** accepted (I10 of [`PLAN-improvements.md`](../PLAN-improvements.md)): accepted by
+Codex and SOLANA-PROJECTS (PR #31), implemented in the I10 code PR.
 
 **Already decided** by SOLANA-PROJECTS (msg 43378):
 - the fee is paid by the taker;
@@ -115,7 +115,8 @@ There is a new instruction, `withdraw_fees` (tag 8).
 - **Two-transfer edges:**
   - On an Ask, the taker's total `quote_atoms + fee` uses checked addition and is rejected
     with `Overflow` before any transfer. Test: `quote_atoms` near `u64::MAX` with a non-zero
-    `fee_bps`.
+    `fee_bps`. A Bid forms no such sum (the maker pays `quote_atoms` in total), so the same
+    price settles on a Bid, with exact balances (Codex I10-02).
   - On a Bid, the split is two transfers out of the maker's account: `quote_atoms - fee` to the
     taker and `fee` to the fee account. If the second transfer fails, the whole instruction
     rolls back.

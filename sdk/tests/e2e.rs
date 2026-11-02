@@ -162,6 +162,7 @@ fn test_sdk_end_to_end() {
         quote_lot_size: 1,
         max_quote_ttl: 60,
         min_size: 1,
+        fee_bps: None,
     };
     vm.send(
         &[ix::create_series(
@@ -229,6 +230,7 @@ fn test_sdk_end_to_end() {
         maker_quote,
         taker_base,
         taker_quote,
+        fee_account: None,
     };
     let pair = quotebook_sdk::settle_instructions(
         &PROGRAM_ID,

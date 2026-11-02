@@ -373,3 +373,36 @@ fn test_maker_key_debug_shows_no_secret() {
     assert!(shown.contains(&key.pubkey().to_string()), "{shown}");
     assert!(!shown.contains(&format!("{:?}", &secret[..32])), "{shown}");
 }
+
+/// `wss://` endpoints (ADR 0002) need TLS compiled into the client: against a listener that
+/// closes at once, the client fails in the TLS handshake, not with "TLS support not compiled
+/// in" before connecting.
+#[test]
+fn test_client_speaks_tls() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let err = runtime.block_on(async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            drop(socket);
+        });
+        let request = QuoteRequest {
+            request_id: 1,
+            series: Address::new_from_array([1; 32]).to_string(),
+            taker: Address::new_from_array([2; 32]).to_string(),
+            taker_side: TakerSide::Buy,
+            size_lots: 1,
+        };
+        client::request_quote(&format!("wss://localhost:{port}"), &request)
+            .await
+            .unwrap_err()
+    });
+    let ClientError::Transport(message) = err else {
+        panic!("expected a transport error, got {err:?}");
+    };
+    assert!(!message.contains("not compiled"), "{message}");
+}

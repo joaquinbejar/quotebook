@@ -12,7 +12,9 @@
 //! - the program's account layouts ([`accounts`]) and instruction encodings
 //!   ([`instruction`]);
 //! - the program's error codes, [`QuotebookError`];
-//! - the fill event `settle` logs ([`event`]).
+//! - the fill event `settle` logs ([`event`]);
+//! - series taker fees ([`fee`]);
+//! - maker profiles, the registry's account and arguments ([`profile`]).
 //!
 //! This is milestone 1 of `docs/PLAN.md`.
 
@@ -21,8 +23,10 @@
 pub mod accounts;
 mod error;
 pub mod event;
+pub mod fee;
 pub mod instruction;
 mod nonce;
+pub mod profile;
 mod quantity;
 mod quote;
 pub mod sigverify;

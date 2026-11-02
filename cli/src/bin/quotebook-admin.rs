@@ -4,7 +4,9 @@
 //! quotebook-admin <command> --url <RPC> --program-id <ID> --payer <KEYPAIR> [options]
 //!   init-config   --admin <KEYPAIR>      (the program's upgrade authority)
 //!   create-series --admin <KEYPAIR> --base <MINT> --quote <MINT> --base-lot <ATOMS>
-//!                 --quote-lot <ATOMS> --max-ttl <SECONDS> --min-size <LOTS>
+//!                 --quote-lot <ATOMS> --max-ttl <SECONDS> --min-size <LOTS> [--fee-bps <BPS>]
+//!   create-fee-account --quote <MINT>   (the Config PDA's account for that mint's fees)
+//!   withdraw-fees --admin <KEYPAIR> --quote <MINT> --destination <TOKEN_ACCOUNT> --amount <ATOMS>
 //!   pause | resume --admin <KEYPAIR> --series <ADDRESS>
 //!   set-admin     --admin <KEYPAIR> --new-admin <ADDRESS>
 //!   init-maker    --maker <KEYPAIR>
@@ -12,6 +14,8 @@
 //!   revoke        --maker <KEYPAIR> --account <TOKEN_ACCOUNT>   (removes the delegate)
 //!   cancel-all    --maker <KEYPAIR> --new-min <NONCE>
 //!   cancel-nonce  --maker <KEYPAIR> --nonce <NONCE>
+//!   set-profile   --maker <KEYPAIR> --endpoint <wss://…> [--name <TEXT>]   (ADR 0002 registry)
+//!   close-profile --maker <KEYPAIR> [--destination <ADDRESS>]   (rent to the payer by default)
 //!   show          (the config)
 //!   show-series   --series <ADDRESS>
 //! ```
@@ -53,6 +57,7 @@ fn run() -> Result<(), CliError> {
         println!("max_quote_ttl {}", s.max_quote_ttl.get());
         println!("min_size {}", s.min_size.get());
         println!("paused {}", s.paused);
+        println!("fee_bps {}", s.fee_bps());
         return Ok(());
     }
     let payer = keys::load(args.req("payer")?)?;
@@ -71,6 +76,14 @@ fn run() -> Result<(), CliError> {
                 quote_lot_size: args.parse_req("quote-lot")?,
                 max_quote_ttl: args.parse_req("max-ttl")?,
                 min_size: args.parse_req("min-size")?,
+                // Immutable once the series exists (ADR 0001); absent means the v1 encoding.
+                fee_bps: args
+                    .opt("fee-bps")
+                    .map(|v| {
+                        v.parse::<u16>()
+                            .map_err(|_| CliError::Args(format!("--fee-bps: cannot parse {v:?}")))
+                    })
+                    .transpose()?,
             };
             let (series, sig) = admin::create_series(
                 &mut rpc,
@@ -83,6 +96,28 @@ fn run() -> Result<(), CliError> {
             )?;
             println!("series {series}");
             sig
+        }
+        "create-fee-account" => {
+            let (account, sig) = admin::create_fee_account(
+                &mut rpc,
+                &program_id,
+                &payer,
+                &address(&args, "quote")?,
+            )?;
+            println!("fee_account {account}");
+            sig
+        }
+        "withdraw-fees" => {
+            let admin_key = keys::load(args.req("admin")?)?;
+            admin::withdraw_fees(
+                &mut rpc,
+                &program_id,
+                &admin_key,
+                &payer,
+                &address(&args, "quote")?,
+                &address(&args, "destination")?,
+                args.parse_req("amount")?,
+            )?
         }
         "pause" | "resume" => {
             let admin_key = keys::load(args.req("admin")?)?;
@@ -134,6 +169,25 @@ fn run() -> Result<(), CliError> {
             let maker = keys::load(args.req("maker")?)?;
             let nonce = quotebook_core::Nonce::new(args.parse_req("nonce")?);
             admin::cancel_nonce(&mut rpc, &program_id, &maker, &payer, nonce)?
+        }
+        "set-profile" => {
+            let maker = keys::load(args.req("maker")?)?;
+            admin::set_profile(
+                &mut rpc,
+                &program_id,
+                &maker,
+                &payer,
+                args.req("endpoint")?,
+                args.opt("name").unwrap_or(""),
+            )?
+        }
+        "close-profile" => {
+            let maker = keys::load(args.req("maker")?)?;
+            let destination = match args.opt("destination") {
+                Some(_) => address(&args, "destination")?,
+                None => payer.pubkey(),
+            };
+            admin::close_profile(&mut rpc, &program_id, &maker, &payer, &destination)?
         }
         other => return Err(CliError::Args(format!("unknown command {other:?}"))),
     };

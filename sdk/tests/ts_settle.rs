@@ -172,6 +172,7 @@ fn test_typescript_built_settle_executes() {
         quote_lot_size: 1,
         max_quote_ttl: 60,
         min_size: 1,
+        fee_bps: None,
     };
     send(
         &mut svm,

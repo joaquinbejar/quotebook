@@ -1,7 +1,9 @@
 //! Stateful property test of the program (docs/PLAN-improvements.md, I6).
 //!
 //! Random sequences of `settle` (both sides, SPL Token and Token-2022), `cancel_all`,
-//! `cancel_nonce` and `set_series_paused` run across 2 makers, 2 takers and 2 series. Each
+//! `cancel_nonce`, `set_series_paused` and `withdraw_fees` run across 2 makers, 2 takers and 4
+//! series: per token program one without a fee and one with a fee (ADR 0001; the
+//! Token-2022 fee-free series uses the 34-byte encoding with `fee_bps` 0). Each
 //! fill is either valid or carries one mutation: a flipped signature byte, a quote for the
 //! other series, an expired quote, a replayed or cancelled nonce, an over-size fill, a quote
 //! bound to the other taker, or a swapped token account.
@@ -11,8 +13,12 @@
 //! regression that rejects every valid `settle` fails at once. After every step it checks
 //! against the model:
 //! - conservation: the total of each mint across all token accounts is constant;
-//! - a successful fill moves exactly `fill × base_lot` and `price × fill × quote_lot`, and
-//!   nothing else changes;
+//! - a successful fill moves exactly `fill × base_lot` and `price × fill × quote_lot`, plus the
+//!   fee `floor(quote × fee_bps / 10,000)` from the taker into the series' fee account (on an
+//!   ask the taker pays it on top; on a bid it comes out of the taker's proceeds), and nothing
+//!   else changes;
+//! - `withdraw_fees` moves exactly its amount from a fee account, or fails with the predicted
+//!   error (zero amount, above the balance);
 //! - delegate allowances drop by exactly the maker's outflow;
 //! - the nonce window (base, last cancel_all, used set) and `fills` equal the model's;
 //! - a rejected transaction leaves every program and token account byte-identical. The fee
@@ -188,7 +194,32 @@ enum Op {
         series: usize,
         paused: bool,
     },
+    /// `withdraw_fees` from the fee account of fee series `fee_series` (0 or 1).
+    Withdraw {
+        fee_series: usize,
+        amount: AmountPick,
+    },
 }
+
+/// How much `withdraw_fees` asks for, relative to the fee account's balance.
+#[derive(Debug, Clone, Copy)]
+enum AmountPick {
+    /// `balance × k / 255`, which is 0 for an empty account.
+    Part(u8),
+    All,
+    Above,
+    Zero,
+}
+
+/// The series of the world: (Token-2022, `fee_bps` argument).
+const SERIES: [(bool, Option<u16>); 4] = [
+    (false, None),
+    (false, Some(100)),
+    (true, Some(0)),
+    (true, Some(37)),
+];
+/// The series with a fee account.
+const FEE_SERIES: [usize; 2] = [1, 3];
 
 fn nonce_pick() -> impl Strategy<Value = NoncePick> {
     prop_oneof![
@@ -196,6 +227,15 @@ fn nonce_pick() -> impl Strategy<Value = NoncePick> {
         3 => any::<u8>().prop_map(NoncePick::Reuse),
         1 => any::<u8>().prop_map(NoncePick::Below),
         1 => any::<u16>().prop_map(NoncePick::Beyond),
+    ]
+}
+
+fn amount_pick() -> impl Strategy<Value = AmountPick> {
+    prop_oneof![
+        4 => any::<u8>().prop_map(AmountPick::Part),
+        2 => Just(AmountPick::All),
+        1 => Just(AmountPick::Above),
+        1 => Just(AmountPick::Zero),
     ]
 }
 
@@ -248,15 +288,18 @@ fn fill_op(
 
 fn op() -> impl Strategy<Value = Op> {
     prop_oneof![
-        12 => fill_op(0usize..2, any::<bool>(), nonce_pick(), mutation()),
+        12 => fill_op(0usize..SERIES.len(), any::<bool>(), nonce_pick(), mutation()),
         2 => (0usize..2, nonce_pick()).prop_map(|(maker, nonce)| Op::CancelAll { maker, nonce }),
         2 => (0usize..2, nonce_pick()).prop_map(|(maker, nonce)| Op::CancelNonce { maker, nonce }),
-        1 => (0usize..2, any::<bool>()).prop_map(|(series, paused)| Op::Pause { series, paused }),
+        1 => (0usize..SERIES.len(), any::<bool>())
+            .prop_map(|(series, paused)| Op::Pause { series, paused }),
+        2 => (0usize..FEE_SERIES.len(), amount_pick())
+            .prop_map(|(fee_series, amount)| Op::Withdraw { fee_series, amount }),
     ]
 }
 
 /// A random sequence plus one valid fill per (side, series) at random positions, so every
-/// sequence offers a successful fill on each side and token program.
+/// sequence offers a successful fill on each side, token program and fee setting.
 fn sequence() -> impl Strategy<Value = Vec<Op>> {
     let forced = |series: usize, ask: bool| {
         fill_op(
@@ -273,8 +316,12 @@ fn sequence() -> impl Strategy<Value = Vec<Op>> {
             forced(0, true),
             forced(1, false),
             forced(1, true),
+            forced(2, false),
+            forced(2, true),
+            forced(3, false),
+            forced(3, true),
         ],
-        prop::collection::vec(any::<prop::sample::Index>(), 4),
+        prop::collection::vec(any::<prop::sample::Index>(), 8),
     )
         .prop_map(|(mut ops, forced, at)| {
             for (f, i) in forced.into_iter().zip(at) {
@@ -294,6 +341,11 @@ struct SeriesW {
     quote_mint: Address,
     program: Address,
     paused: bool,
+    fee_bps: u16,
+    /// The Config-owned fee account, for a series with `fee_bps > 0`.
+    fee_account: Option<Address>,
+    /// Where `withdraw_fees` sends this series' fees: a token account of another owner.
+    treasury: Option<Address>,
 }
 
 /// A token account the model tracks.
@@ -323,18 +375,46 @@ impl World {
         env.set_clock(NOW);
         env.init_config();
         let mut series = Vec::new();
-        for program in [token_program(), token_2022_program()] {
+        let mut fee_accounts = Vec::new();
+        for (is_2022, fee_arg) in SERIES {
+            let program = if is_2022 {
+                token_2022_program()
+            } else {
+                token_program()
+            };
             let base_mint = Keypair::new().pubkey();
             env.set(base_mint, program, mint_data(&[]));
             let quote_mint = Keypair::new().pubkey();
             env.set(quote_mint, program, mint_data(&[]));
-            let (address, _) = env.create_series_with(&base_mint, &quote_mint);
+            let (address, _) = env.create_series_with_args(
+                &base_mint,
+                &quote_mint,
+                SeriesArgs {
+                    fee_bps: fee_arg,
+                    ..SeriesArgs::default()
+                },
+            );
+            let fee_bps = fee_arg.unwrap_or(0);
+            let (fee_account, treasury) = if fee_bps > 0 {
+                let fa = env.token_account(program, &quote_mint, &config_address(), 0, None, &[]);
+                let owner = Keypair::new().pubkey();
+                let tr = env.token_account(program, &quote_mint, &owner, 0, None, &[]);
+                fee_accounts.push((fa, quote_mint));
+                fee_accounts.push((tr, quote_mint));
+                (Some(fa), Some(tr))
+            } else {
+                (None, None)
+            };
+            assert_eq!(env.series(&address).fee_bps(), fee_bps);
             series.push(SeriesW {
                 address,
                 base_mint,
                 quote_mint,
                 program,
                 paused: false,
+                fee_bps,
+                fee_account,
+                treasury,
             });
         }
         let makers = vec![env.maker(), env.maker()];
@@ -380,6 +460,17 @@ impl World {
                     *totals.entry(mint).or_insert(0) += FUNDS;
                 }
             }
+        }
+        for (address, mint) in fee_accounts {
+            tokens.insert(
+                address,
+                TokenModel {
+                    mint,
+                    amount: 0,
+                    allowance: 0,
+                },
+            );
+            totals.entry(mint).or_insert(0);
         }
         Self {
             env,
@@ -452,12 +543,12 @@ impl World {
         let m = self.makers[maker].pubkey();
         let mut taker_base = self.accounts[&(2 + taker, s, false)];
         if swap {
-            // The taker's base account of the other series: right owner, wrong mint.
-            taker_base = self.accounts[&(2 + taker, 1 - s, false)];
+            // The taker's base account of the next series: right owner, wrong mint.
+            taker_base = self.accounts[&(2 + taker, (s + 1) % SERIES.len(), false)];
         }
         let mut data = vec![tag::SETTLE, 0];
         data.extend_from_slice(&fill.to_le_bytes());
-        Instruction::new_with_bytes(
+        let mut ix = Instruction::new_with_bytes(
             PROGRAM_ID,
             &data,
             vec![
@@ -474,6 +565,29 @@ impl World {
                 AccountMeta::new_readonly(sw.program, false),
                 AccountMeta::new_readonly(sw.program, false),
                 AccountMeta::new_readonly(INSTRUCTIONS, false),
+            ],
+        );
+        // Account 13, only for a series with a fee.
+        if let Some(fa) = sw.fee_account {
+            ix.accounts.push(AccountMeta::new(fa, false));
+        }
+        ix
+    }
+
+    fn withdraw_ix(&self, s: usize, amount: u64) -> Instruction {
+        let sw = &self.series[s];
+        let mut data = vec![8u8];
+        data.extend_from_slice(&amount.to_le_bytes());
+        Instruction::new_with_bytes(
+            PROGRAM_ID,
+            &data,
+            vec![
+                AccountMeta::new_readonly(self.env.admin.pubkey(), true),
+                AccountMeta::new_readonly(config_address(), false),
+                AccountMeta::new(sw.fee_account.unwrap(), false),
+                AccountMeta::new(sw.treasury.unwrap(), false),
+                AccountMeta::new_readonly(sw.quote_mint, false),
+                AccountMeta::new_readonly(sw.program, false),
             ],
         )
     }
@@ -521,6 +635,10 @@ struct Stats {
     /// Successful fills per (ask, series).
     fills: BTreeMap<(bool, usize), usize>,
     outcomes: BTreeMap<String, usize>,
+    /// Steps that raised a fee account (a fill with a non-zero fee), and steps that lowered
+    /// one (a withdrawal).
+    fee_credits: usize,
+    withdrawals: usize,
 }
 
 static STATS: Mutex<Option<Stats>> = Mutex::new(None);
@@ -575,7 +693,7 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
                     None
                 };
                 let quote_series = if mutation == Mutation::OtherSeries {
-                    1 - s
+                    (s + 1) % SERIES.len()
                 } else {
                     s
                 };
@@ -627,6 +745,10 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
                 } else {
                     let base = fill * BASE_LOT;
                     let quote = price * fill * QUOTE_LOT;
+                    // ADR 0001, computed here in u128 independently of quotebook_core::fee.
+                    let fee =
+                        u64::try_from(u128::from(quote) * u128::from(w.series[s].fee_bps) / 10_000)
+                            .unwrap();
                     let mb = w.accounts[&(maker, s, false)];
                     let mq = w.accounts[&(maker, s, true)];
                     let tb = w.accounts[&(2 + taker, s, false)];
@@ -636,14 +758,19 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
                         t.get_mut(&mb).unwrap().amount -= base;
                         t.get_mut(&mb).unwrap().allowance -= base;
                         t.get_mut(&tb).unwrap().amount += base;
-                        t.get_mut(&tq).unwrap().amount -= quote;
+                        t.get_mut(&tq).unwrap().amount -= quote + fee;
                         t.get_mut(&mq).unwrap().amount += quote;
                     } else {
                         t.get_mut(&tb).unwrap().amount -= base;
                         t.get_mut(&mb).unwrap().amount += base;
                         t.get_mut(&mq).unwrap().amount -= quote;
                         t.get_mut(&mq).unwrap().allowance -= quote;
-                        t.get_mut(&tq).unwrap().amount += quote;
+                        t.get_mut(&tq).unwrap().amount += quote - fee;
+                    }
+                    if let Some(fa) = w.series[s].fee_account {
+                        t.get_mut(&fa).unwrap().amount += fee;
+                    } else {
+                        assert_eq!(fee, 0);
                     }
                     next_fills[maker] += 1;
                     Outcome::Success
@@ -692,6 +819,32 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
                 let ix =
                     set_series_paused_ix(&admin.pubkey(), &w.series[s].address, u8::from(paused));
                 (Outcome::Success, w.env.send(&[ix], &[&admin]), 2, None)
+            }
+            Op::Withdraw { fee_series, amount } => {
+                let s = FEE_SERIES[fee_series];
+                let (fa, tr) = (
+                    w.series[s].fee_account.unwrap(),
+                    w.series[s].treasury.unwrap(),
+                );
+                let balance = w.tokens[&fa].amount;
+                let amount = match amount {
+                    AmountPick::Part(k) => balance * u64::from(k) / 255,
+                    AmountPick::All => balance,
+                    AmountPick::Above => balance + 1,
+                    AmountPick::Zero => 0,
+                };
+                let predicted = if amount == 0 {
+                    err(0, E::InvalidInstructionData)
+                } else if amount > balance {
+                    err(0, E::InsufficientFees)
+                } else {
+                    expected_tokens.get_mut(&fa).unwrap().amount -= amount;
+                    expected_tokens.get_mut(&tr).unwrap().amount += amount;
+                    Outcome::Success
+                };
+                let admin = w.env.admin.insecure_clone();
+                let ix = w.withdraw_ix(s, amount);
+                (predicted, w.env.send(&[ix], &[&admin]), 2, None)
             }
         };
 
@@ -758,6 +911,20 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
                 a
             );
         }
+        // Fee accounts that moved, for the run's coverage counters.
+        for sw in &w.series {
+            if let Some(fa) = sw.fee_account {
+                let amount = |d: &[u8]| u64::from_le_bytes(d[64..72].try_into().unwrap());
+                let (b, a) = (amount(&before[&fa]), amount(&after[&fa]));
+                let mut g = STATS.lock().unwrap();
+                let st = g.get_or_insert_with(Stats::default);
+                if a > b {
+                    st.fee_credits += 1;
+                } else if a < b {
+                    st.withdrawals += 1;
+                }
+            }
+        }
         // Conservation per mint.
         let mut totals: BTreeMap<Address, u64> = BTreeMap::new();
         for t in w.tokens.values() {
@@ -819,8 +986,20 @@ fn settle_sequences_match_the_model_and_conserve_tokens() {
     let stats = STATS.lock().unwrap().take().unwrap_or_default();
     println!("conservation outcomes: {:#?}", stats.outcomes);
     println!("successful fills per (ask, series): {:?}", stats.fills);
+    println!(
+        "fee credits: {}, withdrawals: {}",
+        stats.fee_credits, stats.withdrawals
+    );
+    assert!(stats.fee_credits > 0, "no fill ever paid a fee");
+    assert!(stats.withdrawals > 0, "no withdrawal ever succeeded");
+    for e in [E::InsufficientFees, E::InvalidInstructionData] {
+        assert!(
+            stats.outcomes.contains_key(&format!("{:?}", Some(e))),
+            "withdraw_fees never failed with {e:?}"
+        );
+    }
     for ask in [false, true] {
-        for s in 0..2 {
+        for s in 0..SERIES.len() {
             assert!(
                 stats.fills.get(&(ask, s)).copied().unwrap_or(0) > 0,
                 "no successful fill for ask={ask} on series {s}"

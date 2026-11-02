@@ -21,7 +21,9 @@ pub mod token;
 use pinocchio::{AccountView, Address, ProgramResult};
 
 use crate::instruction::Tag;
-use crate::processor::{admin, cancel, create_series, init_config, init_maker, settle};
+use crate::processor::{
+    admin, cancel, create_series, init_config, init_maker, profile, settle, withdraw_fees,
+};
 
 // The macros expand to the `extern "C"` entrypoint and the target's allocator and panic hooks;
 // that generated code is the only `unsafe` in this crate. `no_allocator!` also defines
@@ -53,5 +55,8 @@ pub fn process_instruction(
         Tag::SetSeriesPaused => admin::process_set_series_paused(program_id, accounts, args),
         Tag::Settle => settle::process(program_id, accounts, args),
         Tag::SetConfig => admin::process_set_config(program_id, accounts, args),
+        Tag::WithdrawFees => withdraw_fees::process(program_id, accounts, args),
+        Tag::SetProfile => profile::process_set_profile(program_id, accounts, args),
+        Tag::CloseProfile => profile::process_close_profile(program_id, accounts, args),
     }
 }

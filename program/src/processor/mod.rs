@@ -5,7 +5,9 @@ pub mod cancel;
 pub mod create_series;
 pub mod init_config;
 pub mod init_maker;
+pub mod profile;
 pub mod settle;
+pub mod withdraw_fees;
 
 use pinocchio::error::ProgramError;
 use pinocchio::{AccountView, ProgramResult};

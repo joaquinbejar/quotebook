@@ -1,6 +1,6 @@
 //! Program accounts from RPC account data.
 
-use quotebook_core::accounts::{self, Config, MakerState, ProgramAccount, Series};
+use quotebook_core::accounts::{self, Config, MakerProfile, MakerState, ProgramAccount, Series};
 use solana_address::Address;
 
 /// Why an account could not be decoded.
@@ -55,6 +55,29 @@ pub fn maker_state(
     data: &[u8],
 ) -> Result<MakerState, DecodeError> {
     decode(program_id, owner, data, "MakerState")
+}
+
+/// Decodes a `MakerProfile` account (ADR 0002) and checks that it is canonical, and that it
+/// sits at the maker's own PDA. Its endpoint and name are maker-provided text: treat them as
+/// untrusted, and bind any quote obtained through the endpoint to `profile.maker`.
+///
+/// # Errors
+///
+/// `WrongOwner` or `InvalidData`, also for a non-canonical profile or a profile whose address
+/// is not `["profile", maker]`.
+pub fn maker_profile(
+    program_id: &Address,
+    address: &Address,
+    owner: &Address,
+    data: &[u8],
+) -> Result<MakerProfile, DecodeError> {
+    let p: MakerProfile = decode(program_id, owner, data, "MakerProfile")?;
+    quotebook_core::profile::check_canonical(&p)
+        .map_err(|_| DecodeError::InvalidData("MakerProfile"))?;
+    if crate::pda::profile(program_id, &p.maker).0 != *address {
+        return Err(DecodeError::InvalidData("MakerProfile"));
+    }
+    Ok(p)
 }
 
 /// The context-free fill-event decoder, also at [`crate::events::fill_event_payload`]: it says

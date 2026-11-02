@@ -1,10 +1,11 @@
 //! Taker commands: request a quote, check it against the chain, settle it.
 
+use quotebook_core::accounts::{AccountTag, MakerProfile, ProgramAccount};
 use quotebook_core::BaseLots;
-use quotebook_maker::client::{self, Answer, Expectation};
+use quotebook_maker::client::{self, Answer, ClientError, Expectation};
 use quotebook_maker::market::MarketInfo;
 use quotebook_maker::protocol::{QuoteRequest, TakerSide};
-use quotebook_sdk::SettleAccounts;
+use quotebook_sdk::{decode, pda, SettleAccounts};
 use solana_address::Address;
 use solana_keypair::Keypair;
 use solana_signature::Signature;
@@ -60,14 +61,109 @@ pub async fn ask(url: &str, request: &QuoteRequest) -> Result<Answer, CliError> 
     })
 }
 
-/// Checks `answer` against the series read from chain and the cluster clock: the signature
-/// and every rule `settle` applies to the quote's terms, then the maker's token accounts,
-/// which come unsigned (program, mint, owner `quote.maker`, state, and the delegate and
-/// allowance on the paying side). Returns the market for [`settle`].
+/// A maker listed in the registry (ADR 0002): its profile, decoded and validated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listing {
+    /// The profile's maker: a quote from this endpoint must be signed by it.
+    pub maker: Address,
+    /// The profile's endpoint, `wss://…`, printable ASCII.
+    pub endpoint: String,
+    /// The profile's name, printable ASCII, possibly empty.
+    pub name: String,
+}
+
+/// What [`discover`] found.
+#[derive(Debug, Default)]
+pub struct Registry {
+    /// The valid profiles, allowed by the allowlist, sorted by maker.
+    pub listings: Vec<Listing>,
+    /// The addresses of profile-sized accounts that are not valid profiles, sorted.
+    pub invalid: Vec<Address>,
+    /// How many valid profiles the allowlist left out.
+    pub not_allowed: usize,
+}
+
+/// Lists the maker registry: `getProgramAccounts` filtered by the profile size and tag, then
+/// each account decoded and validated (owner, canonical encoding, address `["profile",
+/// maker]`). Invalid accounts are reported, not used. With `allow`, only the listed makers are
+/// kept.
 ///
 /// # Errors
 ///
-/// `Quote` with the program error `settle` would return; the chain reads.
+/// `Rpc`, also for an RPC that cannot list program accounts.
+pub fn discover(
+    rpc: &mut dyn Rpc,
+    program_id: &Address,
+    allow: Option<&[Address]>,
+) -> Result<Registry, CliError> {
+    let size =
+        u64::try_from(MakerProfile::LEN).map_err(|_| CliError::Account("profile size".into()))?;
+    let accounts = rpc.program_accounts(program_id, size, AccountTag::MakerProfile as u8)?;
+    let mut registry = Registry::default();
+    for (address, account) in accounts {
+        let listing = decode::maker_profile(program_id, &address, &account.owner, &account.data)
+            .ok()
+            .and_then(|p| {
+                let text = |bytes: &[u8], len: u8| {
+                    bytes
+                        .get(..usize::from(len))
+                        .and_then(|b| String::from_utf8(b.to_vec()).ok())
+                };
+                Some(Listing {
+                    maker: p.maker,
+                    endpoint: text(&p.endpoint, p.endpoint_len)?,
+                    name: text(&p.name, p.name_len)?,
+                })
+            });
+        match listing {
+            None => registry.invalid.push(address),
+            Some(l) if allow.is_some_and(|a| !a.contains(&l.maker)) => {
+                registry.not_allowed = registry.not_allowed.saturating_add(1);
+            }
+            Some(l) => registry.listings.push(l),
+        }
+    }
+    registry.listings.sort_by_key(|l| l.maker);
+    registry.invalid.sort();
+    Ok(registry)
+}
+
+/// Which makers a quote may come from: the identity binding of ADR 0002.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MakerFilter<'a> {
+    /// For an endpoint found in the registry: the maker of the profile it came from.
+    pub expected: Option<&'a Address>,
+    /// The taker's allowlist, applied to the signed `quote.maker`.
+    pub allow: Option<&'a [Address]>,
+}
+
+impl MakerFilter<'_> {
+    /// Checks the signed `quote.maker` against the filter.
+    ///
+    /// # Errors
+    ///
+    /// `Quote(Mismatch)`.
+    pub fn check(&self, maker: &Address) -> Result<(), CliError> {
+        if self.expected.is_some_and(|e| e != maker) {
+            return Err(ClientError::Mismatch("quote.maker is not the profile's maker").into());
+        }
+        if self.allow.is_some_and(|a| !a.contains(maker)) {
+            return Err(ClientError::Mismatch("quote.maker is not on the allowlist").into());
+        }
+        Ok(())
+    }
+}
+
+/// Checks `answer` against the series read from chain and the cluster clock: the maker filter,
+/// the signature and every rule `settle` applies to the quote's terms, then the maker's token
+/// accounts, which come unsigned (program, mint, owner `quote.maker`, state, and the delegate
+/// and allowance on the paying side). Returns the market for [`settle`].
+///
+/// # Errors
+///
+/// `Quote` for the maker filter, or with the program error `settle` would return; the chain
+/// reads.
+#[allow(clippy::too_many_arguments)]
 pub fn check(
     rpc: &mut dyn Rpc,
     program_id: &Address,
@@ -76,7 +172,9 @@ pub fn check(
     taker: &Address,
     side: TakerSide,
     size: BaseLots,
+    makers: &MakerFilter<'_>,
 ) -> Result<MarketInfo, CliError> {
+    makers.check(&answer.signed.quote.terms().maker)?;
     let market = market::market(rpc, program_id, series)?;
     let now = clock(rpc)?;
     client::verify(
@@ -91,6 +189,75 @@ pub fn check(
     )?;
     check_maker_accounts(rpc, program_id, series, answer, &market, size)?;
     Ok(market)
+}
+
+/// The answers to one request from several makers, each paired with the profile maker its
+/// endpoint came from.
+pub type Asked = Vec<(Address, Result<Answer, CliError>)>;
+
+/// Asks each `(profile maker, endpoint)` in turn. Async, like [`ask`].
+pub async fn ask_each(endpoints: &[(Address, String)], request: &QuoteRequest) -> Asked {
+    let mut asked = Vec::with_capacity(endpoints.len());
+    for (maker, url) in endpoints {
+        asked.push((*maker, ask(url, request).await));
+    }
+    asked
+}
+
+/// The result of [`choose`].
+#[derive(Debug, Default)]
+pub struct Choice {
+    /// The best checked quote, its profile maker and the market for [`settle`].
+    pub best: Option<(Address, Answer, MarketInfo)>,
+    /// The profile makers whose answer failed, and why.
+    pub rejected: Vec<(Address, CliError)>,
+}
+
+/// Checks every answer with [`check`], each bound to the maker of the profile its endpoint came
+/// from and to `allow`, and keeps the best price for the taker: the lowest when buying, the
+/// highest when selling; the first on a tie.
+///
+/// # Errors
+///
+/// None of its own: a failing answer goes to `rejected`.
+#[allow(clippy::too_many_arguments)]
+pub fn choose(
+    rpc: &mut dyn Rpc,
+    program_id: &Address,
+    series: &Address,
+    asked: Asked,
+    taker: &Address,
+    side: TakerSide,
+    size: BaseLots,
+    allow: Option<&[Address]>,
+) -> Choice {
+    let mut choice = Choice::default();
+    for (maker, answer) in asked {
+        let filter = MakerFilter {
+            expected: Some(&maker),
+            allow,
+        };
+        let checked = answer.and_then(|a| {
+            check(rpc, program_id, series, &a, taker, side, size, &filter).map(|m| (a, m))
+        });
+        match checked {
+            Err(e) => choice.rejected.push((maker, e)),
+            Ok((answer, market)) => {
+                let price = answer.signed.quote.terms().price.get();
+                let better = choice.best.as_ref().is_none_or(|(_, b, _)| {
+                    let best = b.signed.quote.terms().price.get();
+                    match side {
+                        TakerSide::Buy => price < best,
+                        TakerSide::Sell => price > best,
+                    }
+                });
+                if better {
+                    choice.best = Some((maker, answer, market));
+                }
+            }
+        }
+    }
+    choice
 }
 
 /// What a maker token account is for in this fill.
@@ -230,6 +397,9 @@ pub fn settle(
         maker_quote: answer.maker_quote,
         taker_base: *taker_base,
         taker_quote: *taker_quote,
+        // A series with a fee needs the fee account: the Config PDA's canonical one (ADR 0001).
+        fee_account: (series.fee_bps() > 0)
+            .then(|| pda::fee_account(program_id, &series.quote_mint, &quote_token_program)),
     };
     let pair = quotebook_sdk::settle_instructions(
         program_id,

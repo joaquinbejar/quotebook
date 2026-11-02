@@ -310,10 +310,12 @@ pub fn check_quote_decode(data: &[u8]) -> String {
 }
 
 // ---------------------------------------------------------------------------------------
-// accounts_decode: structured inputs build valid layouts of all three account types.
+// accounts_decode: structured inputs build valid layouts of all four account types.
 
 /// An `accounts_decode` input: raw bytes, or a layout with the right length and header for
-/// one of the three account types (body bytes arbitrary) plus edits.
+/// one of the four account types plus edits. Config, Series and MakerState bodies are
+/// arbitrary; a MakerProfile body is built canonical (see [`canonical_profile_body`]) so the
+/// edits reach every `profile::check_canonical` rule from an accepting start.
 #[derive(Debug, Arbitrary)]
 pub enum AccountInput {
     Raw(Vec<u8>),
@@ -328,7 +330,7 @@ pub enum AccountInput {
 impl AccountInput {
     pub fn bytes(&self) -> Vec<u8> {
         use quotebook_core::accounts::{
-            AccountTag, Config, MakerState, ProgramAccount, Series, VERSION,
+            AccountTag, Config, MakerProfile, MakerState, ProgramAccount, Series, VERSION,
         };
         match self {
             AccountInput::Raw(b) => b.clone(),
@@ -338,18 +340,23 @@ impl AccountInput {
                 body,
                 edits,
             } => {
-                let (tag, len) = match kind % 3 {
+                let (tag, len) = match kind % 4 {
                     0 => (AccountTag::Config as u8, Config::LEN),
                     1 => (AccountTag::Series as u8, Series::LEN),
-                    _ => (AccountTag::MakerState as u8, MakerState::LEN),
+                    2 => (AccountTag::MakerState as u8, MakerState::LEN),
+                    _ => (AccountTag::MakerProfile as u8, MakerProfile::LEN),
                 };
                 let mut d = vec![0u8; len];
                 d[0] = tag;
                 d[1] = VERSION;
                 d[2] = *bump;
-                for (i, b) in d.iter_mut().skip(8).enumerate() {
-                    if !body.is_empty() {
-                        *b = body[i % body.len()];
+                if tag == AccountTag::MakerProfile as u8 {
+                    canonical_profile_body(&mut d, body);
+                } else {
+                    for (i, b) in d.iter_mut().skip(8).enumerate() {
+                        if !body.is_empty() {
+                            *b = body[i % body.len()];
+                        }
                     }
                 }
                 for e in edits {
@@ -374,17 +381,111 @@ fn check_account<T: quotebook_core::accounts::ProgramAccount + bytemuck::Pod>(da
     got.is_some()
 }
 
-/// Runs the oracle for all three types. Returns the accepted type's name, or "None".
+// MakerProfile layout (ADR 0002): hdr 0..8 (tag, version, bump, 5 zero bytes), maker 8..40,
+// endpoint_len 40, name_len 41, zero padding 42..48, endpoint 48..176, name 176..208.
+const P_EL: usize = 40;
+const P_NL: usize = 41;
+const P_PAD: core::ops::Range<usize> = 42..48;
+const P_ENDPOINT: usize = 48;
+const P_NAME: usize = 176;
+
+/// Fills a profile body canonically from arbitrary bytes: a maker, an endpoint `wss://` plus
+/// 1 to 122 bytes of 0x21..=0x7E, a name of 0 to 32 bytes of 0x20..=0x7E, zero elsewhere.
+fn canonical_profile_body(d: &mut [u8], body: &[u8]) {
+    let at = |i: usize| body.get(i).copied().unwrap_or(0);
+    for i in 0..32 {
+        d[8 + i] = at(i);
+    }
+    let el = 7 + usize::from(at(32)) % 122;
+    let nl = usize::from(at(33)) % 33;
+    d[P_EL] = el as u8;
+    d[P_NL] = nl as u8;
+    d[P_ENDPOINT..P_ENDPOINT + 6].copy_from_slice(b"wss://");
+    for i in 6..el {
+        d[P_ENDPOINT + i] = 0x21 + at(34 + i) % 94;
+    }
+    for i in 0..nl {
+        d[P_NAME + i] = 0x20 + at(200 + i) % 95;
+    }
+}
+
+/// Reference text rules (ADR 0002), written from the ADR rather than `profile::check_text`.
+pub fn reference_profile_text(endpoint: &[u8], name: &[u8]) -> bool {
+    (7..=128).contains(&endpoint.len())
+        && endpoint.starts_with(b"wss://")
+        && endpoint.iter().all(|b| (0x21..=0x7e).contains(b))
+        && name.len() <= 32
+        && name.iter().all(|b| (0x20..=0x7e).contains(b))
+}
+
+/// Reference canonical rule for a decoded 208-byte profile.
+pub fn reference_profile_canonical(d: &[u8]) -> bool {
+    let el = usize::from(d[P_EL]);
+    let nl = usize::from(d[P_NL]);
+    if el > 128 || nl > 32 {
+        return false;
+    }
+    let endpoint = &d[P_ENDPOINT..P_ENDPOINT + 128];
+    let name = &d[P_NAME..P_NAME + 32];
+    d[3..8].iter().all(|b| *b == 0)
+        && d[P_PAD].iter().all(|b| *b == 0)
+        && reference_profile_text(&endpoint[..el], &name[..nl])
+        && endpoint[el..].iter().all(|b| *b == 0)
+        && name[nl..].iter().all(|b| *b == 0)
+}
+
+/// Runs the oracle for all four types, and for an accepted profile the canonical rule.
+/// Returns the accepted type's name ("MakerProfileNonCanonical" for a profile that decodes
+/// but is not canonical), or "None".
 pub fn check_accounts(data: &[u8]) -> &'static str {
-    use quotebook_core::accounts::{Config, MakerState, Series};
+    use quotebook_core::accounts::{Config, MakerProfile, MakerState, Series};
+    use quotebook_core::profile::check_canonical;
     let c = check_account::<Config>(data);
     let s = check_account::<Series>(data);
     let m = check_account::<MakerState>(data);
-    match (c, s, m) {
-        (true, false, false) => "Config",
-        (false, true, false) => "Series",
-        (false, false, true) => "MakerState",
-        (false, false, false) => "None",
+    let p = check_account::<MakerProfile>(data);
+    match (c, s, m, p) {
+        (true, false, false, false) => "Config",
+        (false, true, false, false) => "Series",
+        (false, false, true, false) => "MakerState",
+        (false, false, false, true) => {
+            let profile: MakerProfile = bytemuck::pod_read_unaligned(data);
+            let got = check_canonical(&profile);
+            let want = reference_profile_canonical(data);
+            assert_eq!(got.is_ok(), want, "check_canonical disagrees with the reference");
+            if let Err(e) = got {
+                assert_eq!(e, QuotebookError::InvalidProfile);
+                "MakerProfileNonCanonical"
+            } else {
+                "MakerProfile"
+            }
+        }
+        (false, false, false, false) => "None",
         _ => panic!("one layout decoded as two account types"),
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// instruction_args: set_profile arguments.
+
+/// Predicts `ProfileArgs::decode(data)`: `endpoint_len`, the endpoint, `name_len`, the name,
+/// exactly; then the text rules.
+pub fn reference_profile_args(data: &[u8]) -> Result<(), QuotebookError> {
+    let bad_len = Err(QuotebookError::InvalidInstructionData);
+    let Some(&el) = data.first() else {
+        return bad_len;
+    };
+    let el = usize::from(el);
+    let Some(&nl) = data.get(1 + el) else {
+        return bad_len;
+    };
+    let nl = usize::from(nl);
+    if data.len() != 2 + el + nl {
+        return bad_len;
+    }
+    if reference_profile_text(&data[1..1 + el], &data[2 + el..]) {
+        Ok(())
+    } else {
+        Err(QuotebookError::InvalidProfile)
     }
 }

@@ -107,6 +107,9 @@ initialized (`NotAuthority`).
    cluster clock (signature and every rule `settle` applies) and prints its terms.
    `quotebook-taker settle ...` with `--taker-base <ACCOUNT> --taker-quote <ACCOUNT>` also
    sends `[ed25519 precompile, settle]` and prints the transaction signature.
+   With a maker listed in the registry (`quotebook-admin set-profile`, ADR 0002),
+   `--discover` replaces `--maker`: the taker asks every listed maker and settles the best
+   checked quote, each bound to the maker of its profile; `--allow <MAKER>,…` narrows it.
 3. Check: the maker's `MakerState.fills` goes up by one, the nonce is used (a second settle
    fails with `NonceUsed`), and the balances moved by `fill × base_lot_size` and
    `price × fill × quote_lot_size`.
