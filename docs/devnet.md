@@ -212,3 +212,70 @@ maker was minted 1,000 QBB and 100,000 QBQ, and the taker 100 QBB and 10,000 QBQ
 - `MakerState` after `settle` showed `fills` = 1, nonce 1 used and nonce 0 unused (it was only
   quoted). The final `cancel_all` raised the watermark to 2, which voided the open nonce 0.
 - The maker service was stopped after the demo.
+
+## RFQ demo on a metalbook series (milestone I9, 2026-11-02)
+
+A quotebook series whose base token is a metalbook option. The maker sells a long token of a
+live metalbook series for Circle devnet USDC over the RFQ, with no new code: only
+`quotebook-admin`, `quotebook-maker` and `quotebook-taker` from `main` (`ae0903b`). Plan:
+[`PLAN-improvements.md`](PLAN-improvements.md), I9. metalbook's side is in its
+[devnet log](https://github.com/joaquinbejar/metalbook/blob/main/docs/devnet-log.md).
+
+### Accounts
+
+| Item | Value |
+| --- | --- |
+| metalbook series | XAG capped call, 1 oz, strike 50, cap 55, expiry 1794603600 (Fri 2026-11-13 21:00Z): `B66MftMja6L6g2XFNLWHUWE2Rjq1yTHtToWQTvxsZx21` |
+| Base: metalbook long mint | `AF3A2Rt57QPYXnXg42nBNTN2TLP8GoMjp94ZVYVyjH4x` (SPL Token, 0 decimals) |
+| Quote: Circle devnet USDC | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` (6 decimals) |
+| quotebook series 1 | `AbfhiX44ebCSpLEB8ba1gw5vL8qJr7yb7RxYk3CwSCAf`: `base_lot` 1, `quote_lot` 10,000 (0.01 USDC per tick), `max_quote_ttl` 60, `min_size` 1 |
+| Maker | metalbook's devnet maker `7tVPWX3zmxYCZ5ioTSX4yzdNq8o3Xr1hMSv2kz12cACQ`, signing with metalbook's agreement for these steps only; it wrote 3 contracts of the series in metalbook |
+| Maker long-token account | `FMKDwm14TMcvfDGTjt3umPk5wJBgFaCxy1EhiwruFb13` |
+| Maker USDC account | `CTMwGLgvpCBY3oZWaWUrWCjMfkn5VgeMGc5LbhjFL95Q` |
+| Maker `MakerState` | `6f4Xq5D1SxSNAZStgf11X2d7LiMsKCQG7fpepnxSR5wv` |
+| Maker delegate PDA | `6HkDimtJ9ZzNCrnsHkEmPiPoDzeA5SqRepwwiwvZoZhL` |
+| Taker | `3ZBj1qBpdoH5NrMTwAHq2fY6Hbo5M1GURxaP9y8bsqLs` (10 USDC from metalbook) |
+| Taker long-token account | `EMuqqB2cEeYbg8ZU7QmXqhnycCHLeaFB5uXQ1HUya199` |
+| Taker USDC account | `8kicXLNNrXtx2EYngwqYCq8HmWZHtThsLvwmTAqoLmnT` |
+
+### Transactions
+
+| Step | Signature |
+| --- | --- |
+| `create_series` (series 1) | `5d8MmCFuRgPfVszVAnMJZb6KrjP7wjcTXcGPYbtXCcCARbpdPpmJsEgCffCTYTjr2LZUTPvyH8uXLQp1DnMbdcWH` |
+| Taker long-token account | `3xRUGgit84ESgBpktN1rsb2kvvQQ6r4r9EoFyppegVs2vwpShDuZXo8QXvUuTmEMnaNm17AktFjSRq3X1jFZhmnc` |
+| `init_maker` (7tVP…) | `3UJaZ57vaRgXEPACVZCswRGsyVHJpQRL6UABdjKacTwtHLjXrxdikFm98RnksoahzrdQR8AYXUBZdSAdJeB6AzF` |
+| Approve delegate, 3 long tokens | `3mWuWv7rzaL3bbrpTDBZQNyHJtUjFcXV76WLbboKJuJnNzwgQDfceRV1RBgyS8kkYkHQRtwTqWqkxWfYgq8mgcdx` |
+| `settle`: taker buys 1 long token at 123 ticks (1.23 USDC) | `4tNTwmG1t51A2uyhUwoVELv1R7qq2LsrwbdNbRMeWaZ2kXRXPUhRy2DbM3VGtPkwQvMdx4797RBgyAcYhfxTRB2c` |
+| Revoke the delegate approval | `66QJkHYLrSpJSu4CuttdNpQ4bj3452fj6iqZnMMMh7jTDVsAkW13wBRTobhNS9fWgcLWQs9HMfBVGvCNMzeBFFSw` |
+
+### Pricing
+
+The mid came from metalbook-maker's `mark` (the capped call as C(50) − C(55), 1 oz), with XAG
+spot 50.29345 from Pyth, rate 4% and carry 0. With no implied volatility source, it gave
+1.0568, 1.1959 and 1.3142 USDC at 25%, 30% and 35% volatility. The demo quoted around a
+**1.20 USDC** mid.
+
+The maker's risk defaults (`--order-intensity 1.5`, `--risk-aversion 0.1`) are tuned for
+prices around 25. Avellaneda-Stoikov's spread term `(2/γ) ln(1 + γ/k)` is in absolute price
+units, so at a 1.20 mid they gave a 54% deviation, which the maker's own 5% guard rejected
+(`rejected (Pricing): price deviates 0.5378… above the 0.05 tolerance`). The service was
+stopped by PID and restarted with `--volatility 0.3 --order-intensity 40`: the spread term
+becomes `20 × ln(1.0025) ≈ 0.05` USDC, and the ask came out at 1.23 USDC (rounded toward
+the maker).
+
+### Checks
+
+- The restarted service refused a request during its cold start with `RateLimited` (`no
+  quotes before 1793608717`). After the cold start it quoted an ask at 123 ticks for 1 lot:
+  nonce 0 for `quote` and nonce 1 for `settle`.
+- After `settle`, the maker went from 3 to 2 long tokens and from 15 to 16.23 USDC. The taker
+  went from 0 to 1 long token and from 10 to 8.77 USDC. That is `1 × 1` base atom and
+  `123 × 1 × 10,000 = 1,230,000` quote atoms. `settle` used 8,595 CU, as on series 0.
+- `MakerState` after `settle`: `fills` = 1, `window_base` 0, and the first word of the ring
+  `0b10` (nonce 1 used, nonce 0 only quoted). Nonce 0 expired 30 s after it was quoted.
+- The maker service was stopped by PID after the fill, and the delegate approval on
+  `FMKD…Fb13` was revoked (`spl-token display` shows `Delegation: (not set)`), so no further
+  fill can move the maker's long tokens.
+- The taker's long token is a live metalbook position: metalbook's keeper settles the series
+  at expiry, and the token is redeemed there.
