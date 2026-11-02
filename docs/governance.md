@@ -101,9 +101,10 @@ compatible.
 - **A bug in `settle`:** the admin pauses every series (one `set_series_paused` per series;
   `docs/runbooks.md`, I4). The upgrade authority then ships the fix through the procedure above.
 - **A compromised admin key:** the attacker can pause or create series, but cannot move
-  funds. The upgrade authority cannot replace the admin: `set_config` is signed by the current
-  admin. So a compromised admin can only be fixed by a program upgrade that resets it. This is
-  a known gap, recorded for the audit scope (I5).
+  funds. If the operator still holds the key, it races the attacker with `set_config` to a fresh
+  key (runbooks.md, 5). The gap is that there is **no forced recovery**: the upgrade authority
+  cannot reset the admin. So if the admin key is lost, or the attacker has already rotated it
+  away, only a program upgrade can restore control. This is recorded for the audit scope (I5).
 - **A compromised upgrade authority:** total. Hence the multisig, and on devnet the dedicated
   key that is never used for anything else.
 
