@@ -1,6 +1,6 @@
 # quotebook: improvement plan
 
-Status: **draft r6, for Codex review**. GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
+Status: **approved r6** (Codex, PR #18 review at `a4f1e0b`). GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
 Baseline: `main` at `4b3751f` (v0.1.1 on crates.io; program `3Aq1Aw…6mbo` on devnet, built
 from `898c173`). `docs/PLAN.md` stays the v1 design record; this file plans the work after v1.
 
