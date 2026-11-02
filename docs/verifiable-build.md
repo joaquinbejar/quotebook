@@ -63,6 +63,22 @@ solana program dump 3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo dump.so --url d
 shasum -a 256 dump.so                              # must equal program-sha256 above
 ```
 
+### Remote verification (OtterSec): not available for this deployment
+
+The plan (I2) asked whether OtterSec's remote verification (`solana-verify verify-from-repo
+--remote`, `https://verify.osec.io`) accepts devnet, and for the answer to be recorded either
+way. It does not. In `solana-verify` 0.5.2, `src/api/client.rs:99` compares the cluster's
+genesis hash with `MAINNET_GENESIS_HASH` before sending a job. Any other cluster fails with
+"Remote verification service only supports mainnet. You're currently connected to a different
+network." (source read 2026-11-02, from the crates.io package). Nothing was submitted.
+
+Even on mainnet, the remote service rebuilds inside an official
+`solanafoundation/solana-verifiable-build` image, so it cannot attest this repository's own
+Dockerfile. The custom fallback is reproducible (anyone can rebuild the hash above), but it is
+not `solana-verify`-attestable. The way to an attested build is an official image for the pinned
+Agave version, plus mainnet. That is a pre-mainnet item, together with the multisig upgrade
+authority of I3.
+
 When an official 4.4 image appears, switching to `solana-verify build --base-image` is a
 one-line change. Its output must match the hash above before the switch.
 
