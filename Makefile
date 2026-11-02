@@ -56,6 +56,24 @@ bench: program
 	QUOTEBOOK_BENCH_OUT=$(CURDIR)/docs/benchmarks.md \
 	cargo test $(CARGO_FLAGS) -p quotebook-program --test cu -- --nocapture
 
+# Reproducible build of the program in Docker (scripts/verifiable/Dockerfile, the CI pins),
+# from the committed tree only, into target/verifiable/quotebook_program.so.
+.PHONY: verifiable
+verifiable:
+	@sh scripts/verifiable/build.sh HEAD
+
+# The reproducible build must hash to the `program-sha256` line of docs/verifiable-build.md,
+# so a change to the program updates the recorded hash in the same PR (as `bench` does for
+# docs/benchmarks.md). Not part of pre-push: it needs Docker; CI runs it.
+.PHONY: verifiable-check
+verifiable-check: verifiable
+	@want=$$(sed -n 's/^program-sha256: `\([0-9a-f]*\)`.*/\1/p' docs/verifiable-build.md); \
+	if command -v sha256sum > /dev/null; then sum="sha256sum"; else sum="shasum -a 256"; fi; \
+	got=$$($$sum target/verifiable/quotebook_program.so | cut -d' ' -f1); \
+	if [ -z "$$want" ] || [ "$$want" != "$$got" ]; then \
+		echo "verifiable-check: built $$got, docs/verifiable-build.md records '$$want'"; exit 1; fi; \
+	echo "verifiable-check: $$got matches docs/verifiable-build.md"
+
 # Run every test, including the LiteSVM program tests (which load target/deploy, so `make
 # program` runs first). QUOTEBOOK_PROPTEST_CASES=<n> overrides the property-test case count.
 .PHONY: test
