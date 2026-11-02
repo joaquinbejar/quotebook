@@ -43,6 +43,9 @@ export const Tag = {
   CancelNonce: 5,
   Settle: 6,
   SetConfig: 7,
+  WithdrawFees: 8,
+  SetProfile: 9,
+  CloseProfile: 10,
 } as const;
 /** The maker's side. */
 export const Side = { Bid: 0, Ask: 1 } as const;
@@ -189,6 +192,9 @@ export interface SettleAccounts {
   makerQuote: Address;
   takerBase: Address;
   takerQuote: Address;
+  /** Account 13, only for a series with `fee_bps > 0` (ADR 0001): a token account of the
+   * quote mint owned by the Config PDA; `feeAccountAddress` gives the canonical one. */
+  feeAccount?: Address;
 }
 
 /** `settle` data: tag 6, `sig_ix_index: u8`, `fill_size: u64` (base lots). */
@@ -231,8 +237,23 @@ export async function settleInstruction(
       { address: a.baseTokenProgram, role: r.READONLY },
       { address: a.quoteTokenProgram, role: r.READONLY },
       { address: INSTRUCTIONS_SYSVAR, role: r.READONLY },
+      ...(a.feeAccount === undefined ? [] : [{ address: a.feeAccount, role: r.WRITABLE }]),
     ],
   };
+}
+
+// ---------------------------------------------------------------------------------------
+// Fees (ADR 0001).
+
+/** The largest series fee, in basis points. */
+export const MAX_FEE_BPS = 100;
+
+/** The taker fee of a fill: `floor(quoteAtoms × feeBps / 10,000)`, in the taker's favour. */
+export function fee(quoteAtoms: bigint, feeBps: number): bigint {
+  if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 0xffff) {
+    throw new QuotebookCodecError("feeBps is not a u16");
+  }
+  return (u64(quoteAtoms, "quoteAtoms") * BigInt(feeBps)) / 10_000n;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -269,6 +290,30 @@ export async function delegatePda(programId: Address, maker: Address): Promise<P
   });
 }
 
+/** A maker's registry profile (ADR 0002): `["profile", maker]`. */
+export async function profilePda(programId: Address, maker: Address): Promise<Pda> {
+  return getProgramDerivedAddress({
+    programAddress: programId,
+    seeds: ["profile", addressBytes(maker)],
+  });
+}
+
+export const ASSOCIATED_TOKEN_PROGRAM = address("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+
+/** The canonical fee account of a quote mint: the Config PDA's associated token account. */
+export async function feeAccountAddress(
+  programId: Address,
+  quoteMint: Address,
+  tokenProgram: Address,
+): Promise<Address> {
+  const [config] = await configPda(programId);
+  const [ata] = await getProgramDerivedAddress({
+    programAddress: ASSOCIATED_TOKEN_PROGRAM,
+    seeds: [addressBytes(config), addressBytes(tokenProgram), addressBytes(quoteMint)],
+  });
+  return ata;
+}
+
 // ---------------------------------------------------------------------------------------
 // Accounts (quotebook-core::accounts). The caller checks that quotebook owns the account.
 
@@ -276,6 +321,7 @@ const VERSION = 1;
 const TAG_CONFIG = 1;
 const TAG_SERIES = 2;
 const TAG_MAKER_STATE = 3;
+const TAG_MAKER_PROFILE = 4;
 
 function header(b: Uint8Array, len: number, tag: number): number {
   if (b.length !== len || b[0] !== tag || b[1] !== VERSION) {
@@ -310,6 +356,8 @@ export interface SeriesAccount {
   paused: boolean;
   baseIs2022: boolean;
   quoteIs2022: boolean;
+  /** The taker fee in basis points; 0 for a fee-free series. */
+  feeBps: number;
 }
 
 export function decodeSeries(b: Uint8Array): SeriesAccount {
@@ -328,6 +376,50 @@ export function decodeSeries(b: Uint8Array): SeriesAccount {
     paused: b[128] !== 0,
     baseIs2022: b[129] !== 0,
     quoteIs2022: b[130] !== 0,
+    feeBps: v.getUint16(136, true),
+  };
+}
+
+export interface MakerProfileAccount {
+  bump: number;
+  maker: Address;
+  /** A `wss://` URL. Untrusted text: display it escaped. */
+  endpoint: string;
+  name: string;
+}
+
+const printable = (c: number, space: boolean) => (space ? c >= 0x20 : c >= 0x21) && c <= 0x7e;
+
+/** Decodes a canonical maker profile (ADR 0002) and throws on anything else: nonzero
+ * padding, an endpoint that is not `wss://` printable ASCII of 7 to 128 bytes, a name that is
+ * not printable ASCII of at most 32 bytes, or nonzero bytes past either text. The caller checks
+ * the owner and that the address is `profilePda(maker)`. */
+export function decodeMakerProfile(b: Uint8Array): MakerProfileAccount {
+  const bump = header(b, 208, TAG_MAKER_PROFILE);
+  const el = b[40] ?? 0;
+  const nl = b[41] ?? 0;
+  const endpoint = b.subarray(48, 176);
+  const name = b.subarray(176, 208);
+  const zero = (x: Uint8Array) => x.every((c) => c === 0);
+  const scheme = new TextEncoder().encode("wss://");
+  const ok =
+    zero(b.subarray(3, 8)) &&
+    zero(b.subarray(42, 48)) &&
+    el >= 7 &&
+    el <= 128 &&
+    nl <= 32 &&
+    equalBytes(endpoint.subarray(0, 6), scheme) &&
+    endpoint.subarray(0, el).every((c) => printable(c, false)) &&
+    name.subarray(0, nl).every((c) => printable(c, true)) &&
+    zero(endpoint.subarray(el)) &&
+    zero(name.subarray(nl));
+  if (!ok) throw new QuotebookCodecError("InvalidProfile");
+  const text = new TextDecoder("ascii");
+  return {
+    bump,
+    maker: addressAt(b, 8),
+    endpoint: text.decode(endpoint.subarray(0, el)),
+    name: text.decode(name.subarray(0, nl)),
   };
 }
 

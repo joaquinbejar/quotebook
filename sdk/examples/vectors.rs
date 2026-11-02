@@ -18,8 +18,10 @@
 
 use std::fmt::Write as _;
 
-use quotebook_sdk::core::accounts::{self, Config, MakerState, Series};
+use quotebook_sdk::core::accounts::{self, Config, MakerProfile, MakerState, Series};
 use quotebook_sdk::core::event::FillEvent;
+use quotebook_sdk::core::fee::{fee, MAX_FEE_BPS};
+use quotebook_sdk::core::profile::ProfileArgs;
 use quotebook_sdk::core::{
     sigverify, BaseAtoms, BaseLots, Nonce, NonceWindow, Quote, QuoteAtoms, QuoteLotsPerBaseLot,
     QuoteTerms, Seconds, SeriesId, Side, UnixTimestamp,
@@ -184,6 +186,13 @@ fn main() {
         maker_quote: sc.maker_quote,
         taker_base: sc.taker_base,
         taker_quote: sc.taker_quote,
+        fee_account: None,
+    };
+    // The same accounts on a fee series (ADR 0001): account 13 is the canonical fee account.
+    let fee_account = pda::fee_account(&PROGRAM_ID, &sc.quote_mint, &token_program());
+    let fee_accounts = SettleAccounts {
+        fee_account: Some(fee_account),
+        ..accounts
     };
 
     // Quotes: the scenario quote, then edge values.
@@ -241,6 +250,13 @@ fn main() {
                     .try_into()
                     .unwrap();
                 let settle = ix::settle(&PROGRAM_ID, &q, &accounts, *sig_ix, BaseLots::new(*fill));
+                let settle_fee = ix::settle(
+                    &PROGRAM_ID,
+                    &q,
+                    &fee_accounts,
+                    *sig_ix,
+                    BaseLots::new(*fill),
+                );
                 J::O(vec![
                     ("terms", terms_json(t)),
                     ("encoded", s(hex(&q.encode()))),
@@ -252,6 +268,7 @@ fn main() {
                     ("fill_size", s(fill)),
                     ("sig_ix_index", J::U(u64::from(*sig_ix))),
                     ("settle", ix_json(&settle)),
+                    ("settle_with_fee", ix_json(&settle_fee)),
                 ])
             })
             .collect(),
@@ -281,6 +298,7 @@ fn main() {
     for (kind, (a, b)) in [
         ("maker_state", pda::maker_state(&PROGRAM_ID, &maker)),
         ("delegate", pda::delegate(&PROGRAM_ID, &maker)),
+        ("profile", pda::profile(&PROGRAM_ID, &maker)),
     ] {
         pdas.push(J::O(vec![
             ("kind", s(kind)),
@@ -289,6 +307,13 @@ fn main() {
             ("bump", J::U(u64::from(b))),
         ]));
     }
+
+    pdas.push(J::O(vec![
+        ("kind", s("fee_account")),
+        ("quote_mint", s(sc.quote_mint)),
+        ("token_program", s(token_program())),
+        ("address", s(fee_account)),
+    ]));
 
     // Accounts.
     let config = Config {
@@ -313,7 +338,8 @@ fn main() {
         base_is_2022: 0,
         quote_is_2022: 1,
         _pad: [0; 5],
-        _reserved: [0; 8],
+        fee_bps: 37u16.to_le_bytes(),
+        _reserved: [0; 6],
     };
     let mut window = NonceWindow::new();
     for n in [1u64, 2, 70, 16_000] {
@@ -353,6 +379,13 @@ fn main() {
         J::O(vec![("nonce", s(n)), ("result", s(result))])
     })
     .collect();
+    let mut profile: MakerProfile = bytemuck::Zeroable::zeroed();
+    profile.hdr = accounts::new_hdr::<MakerProfile>(pda::profile(&PROGRAM_ID, &maker).1);
+    profile.maker = maker;
+    ProfileArgs::new(b"wss://maker.example:9000/rfq", b"Example desk")
+        .unwrap()
+        .write_to(&mut profile);
+    quotebook_sdk::core::profile::check_canonical(&profile).unwrap();
     let accounts_json = J::O(vec![
         (
             "config",
@@ -380,6 +413,7 @@ fn main() {
                 ("paused", J::B(true)),
                 ("base_is_2022", J::B(false)),
                 ("quote_is_2022", J::B(true)),
+                ("fee_bps", J::U(37)),
             ]),
         ),
         (
@@ -398,7 +432,39 @@ fn main() {
                 ("checks", J::A(checks)),
             ]),
         ),
+        (
+            "maker_profile",
+            J::O(vec![
+                ("data", s(hex(bytemuck::bytes_of(&profile)))),
+                ("bump", J::U(u64::from(profile.hdr.bump))),
+                ("maker", s(maker)),
+                ("endpoint", s("wss://maker.example:9000/rfq")),
+                ("name", s("Example desk")),
+            ]),
+        ),
     ]);
+
+    // Fees (ADR 0001): floor(quote_atoms × fee_bps / 10,000).
+    let fees = J::A(
+        [
+            (0u64, 100u16),
+            (99, 100),
+            (100, 100),
+            (10_000, 37),
+            (1_000_000, 1),
+            (u64::MAX, MAX_FEE_BPS),
+            (u64::MAX, 0),
+        ]
+        .iter()
+        .map(|(q, bps)| {
+            J::O(vec![
+                ("quote_atoms", s(q)),
+                ("fee_bps", J::U(u64::from(*bps))),
+                ("fee", s(fee(*q, *bps).unwrap())),
+            ])
+        })
+        .collect(),
+    );
 
     // Fill events.
     let events = [
@@ -498,6 +564,7 @@ fn main() {
         ("quotes", quotes),
         ("pdas", J::A(pdas)),
         ("accounts", accounts_json),
+        ("fees", fees),
         ("fill_events", events_json),
         ("signatures", sigs),
         ("scenario", scenario_json),

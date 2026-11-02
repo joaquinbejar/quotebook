@@ -10,14 +10,18 @@ import {
   configPda,
   decodeConfig,
   decodeFillEvent,
+  decodeMakerProfile,
   decodeMakerState,
   decodeQuote,
   decodeSeries,
   delegatePda,
   encodeFillEvent,
   encodeQuote,
+  fee,
+  feeAccountAddress,
   makerStatePda,
   precompileData,
+  profilePda,
   seriesPda,
   settleInstruction,
   signQuote,
@@ -112,12 +116,43 @@ test("precompile data and settle instructions", async () => {
       is_writable: a.role === AccountRole.WRITABLE || a.role === AccountRole.WRITABLE_SIGNER,
     }));
     assert.deepEqual(metas, q.settle.accounts);
+    // The same fill on a fee series: account 13 is the canonical fee account, writable.
+    const feeAccount = await feeAccountAddress(
+      address(V.program_id),
+      address(sc.quote_mint),
+      address(sc.token_program),
+    );
+    const withFee = await settleInstruction(
+      address(V.program_id),
+      t,
+      { ...accounts, feeAccount },
+      q.sig_ix_index,
+      BigInt(q.fill_size),
+    );
+    const feeMetas = (withFee.accounts ?? []).map((a) => ({
+      pubkey: a.address,
+      is_signer: a.role === AccountRole.READONLY_SIGNER || a.role === AccountRole.WRITABLE_SIGNER,
+      is_writable: a.role === AccountRole.WRITABLE || a.role === AccountRole.WRITABLE_SIGNER,
+    }));
+    assert.equal(hex(withFee.data as Uint8Array), q.settle_with_fee.data);
+    assert.deepEqual(feeMetas, q.settle_with_fee.accounts);
   }
+});
+
+test("fees: floor in the taker's favour", () => {
+  for (const f of V.fees) assert.equal(fee(BigInt(f.quote_atoms), f.fee_bps).toString(), f.fee);
+  assert.throws(() => fee(-1n, 1));
+  assert.throws(() => fee(1n, 70_000));
 });
 
 test("PDAs and bumps", async () => {
   const program = address(V.program_id);
   for (const p of V.pdas) {
+    if (p.kind === "fee_account") {
+      const a = await feeAccountAddress(program, address(p.quote_mint), address(p.token_program));
+      assert.equal(a, p.address, p.kind);
+      continue;
+    }
     const [a, bump] =
       p.kind === "config"
         ? await configPda(program)
@@ -125,7 +160,9 @@ test("PDAs and bumps", async () => {
           ? await seriesPda(program, address(p.base_mint), address(p.quote_mint), BigInt(p.index))
           : p.kind === "maker_state"
             ? await makerStatePda(program, address(p.maker))
-            : await delegatePda(program, address(p.maker));
+            : p.kind === "profile"
+              ? await profilePda(program, address(p.maker))
+              : await delegatePda(program, address(p.maker));
     assert.equal(a, p.address, p.kind);
     assert.equal(bump, p.bump, p.kind);
   }
@@ -154,6 +191,7 @@ test("account decoders", () => {
       series.paused,
       series.baseIs2022,
       series.quoteIs2022,
+      series.feeBps,
     ],
     [
       s.bump,
@@ -168,8 +206,32 @@ test("account decoders", () => {
       s.paused,
       s.base_is_2022,
       s.quote_is_2022,
+      s.fee_bps,
     ],
   );
+  const p = V.accounts.maker_profile;
+  const prof = decodeMakerProfile(bytes(p.data));
+  assert.deepEqual(
+    [prof.bump, prof.maker, prof.endpoint, prof.name],
+    [p.bump, p.maker, p.endpoint, p.name],
+  );
+  // Every canonical rule, one mutation each.
+  const mutate = (edit: (b: Uint8Array) => void) => {
+    const b = bytes(p.data);
+    edit(b);
+    assert.throws(() => decodeMakerProfile(b), /InvalidProfile|wrong length/);
+  };
+  mutate((b) => (b[3] = 1)); // header padding
+  mutate((b) => (b[42] = 1)); // profile padding
+  mutate((b) => (b[40] = 6)); // endpoint too short
+  mutate((b) => (b[40] = 129)); // endpoint too long
+  mutate((b) => (b[41] = 33)); // name too long
+  mutate((b) => (b[48] = 0x68)); // "hss://"
+  mutate((b) => (b[60] = 0x20)); // a space in the endpoint
+  mutate((b) => (b[180] = 0x09)); // a tab in the name
+  mutate((b) => (b[175] = 0x61)); // a byte past the endpoint
+  mutate((b) => (b[207] = 0x61)); // a byte past the name
+  mutate((b) => (b[0] = 3)); // another account type
   const m = V.accounts.maker_state;
   const ms = decodeMakerState(bytes(m.data));
   assert.deepEqual(
