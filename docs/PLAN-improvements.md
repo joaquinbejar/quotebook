@@ -466,6 +466,31 @@ I5's audit commit is frozen at that point.
 - **Before publishing:** publishing is irreversible. I read the inbox immediately before
   `cargo publish`, and it needs an explicit GO from SOLANA-PROJECTS at that moment.
 
+### I12. Maker risk parameters relative to the mid (S)
+
+Added after I9 (SOLANA-PROJECTS, msg 44092).
+
+**Finding:** the maker service's Avellaneda-Stoikov parameters are absolute. Its spread term
+`(2/γ) ln(1 + γ/k)` is in price units, and the defaults (`--risk-aversion 0.1`,
+`--order-intensity 1.5`) were tuned for prices near 25. At the I9 mid of 1.20 USDC they put
+the quote 54% away from the mid, so the maker's own 5% deviation guard rejected every
+request. At a mid of 3,000 the same defaults would give a spread of about 0.04%, far too
+tight.
+
+**Change:**
+- The spread and its caps are expressed in basis points of the mid: a half-spread floor and
+  cap, and the inventory skew. The service derives the model's price-unit parameters from
+  the mid at each quote, so one set of defaults works at any price level.
+- The existing flags stay as advanced overrides, documented as absolute.
+- Rounding stays exact and toward the maker.
+
+**Tests:**
+- At a mid of 1.20 and at a mid of 3,000, the default quote's half-spread lies within the
+  configured bps bounds, the deviation guard accepts it, and bid < mid < ask after
+  rounding to the tick.
+- A property test over mids from 0.01 to 1,000,000 checks the same three facts.
+- A regression test reproduces the I9 failure with the old absolute defaults.
+
 ## Later (L, design only for now)
 
 ### L1. v2 package quotes
@@ -514,6 +539,7 @@ I5's audit commit is frozen at that point.
 | I9 | metalbook RFQ demo (before 2026-11-13 21:00Z) | S | I1; metalbook accounts ready |
 | I10 | Fee and registry ADRs, then code, then devnet upgrade | S + M | I6, I7 |
 | I11 | Release 0.2.0 | S | I10, GO |
+| I12 | Maker risk parameters relative to the mid | S | I9 finding |
 | L1 | v2 package quotes design | L (design only) | I10 |
 
 ## Questions answered by SOLANA-PROJECTS (msg 43378)
