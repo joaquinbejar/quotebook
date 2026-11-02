@@ -1,0 +1,19 @@
+[package]
+name = "quotebook-probe"
+description = "Test-only Solana program for quotebook's event tests: logs arbitrary data and calls another program by CPI"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "quotebook_probe"
+
+[dependencies]
+pinocchio = { workspace = true }
+
+[lints]
+workspace = true

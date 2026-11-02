@@ -3,13 +3,14 @@
 //! Pinocchio, `no_std`, no allocator. Milestones 2 and 3 of `docs/PLAN.md`: the accounts
 //! (`Config`, `Series`, `MakerState`) and every v1 instruction: `init_config`, `set_config`,
 //! `create_series`, `set_series_paused`, `init_maker`, `cancel_all`, `cancel_nonce` and
-//! `settle`.
+//! `settle`. `settle` also logs a fill event (`quotebook_core::event`, I7).
 
 #![no_std]
 
 pub mod error;
 pub mod instruction;
 pub mod loader;
+pub mod log;
 pub mod mint;
 pub mod pda;
 pub mod processor;

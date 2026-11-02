@@ -56,3 +56,7 @@ pub fn maker_state(
 ) -> Result<MakerState, DecodeError> {
     decode(program_id, owner, data, "MakerState")
 }
+
+/// The context-free fill-event decoder, also at [`crate::events::fill_event_payload`]: it says
+/// nothing about who logged the bytes.
+pub use crate::events::fill_event_payload;

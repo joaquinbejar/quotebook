@@ -11,7 +11,8 @@
 //! - reading the verified quote out of an ed25519 precompile instruction ([`sigverify`]);
 //! - the program's account layouts ([`accounts`]) and instruction encodings
 //!   ([`instruction`]);
-//! - the program's error codes, [`QuotebookError`].
+//! - the program's error codes, [`QuotebookError`];
+//! - the fill event `settle` logs ([`event`]).
 //!
 //! This is milestone 1 of `docs/PLAN.md`.
 
@@ -19,6 +20,7 @@
 
 pub mod accounts;
 mod error;
+pub mod event;
 pub mod instruction;
 mod nonce;
 mod quantity;

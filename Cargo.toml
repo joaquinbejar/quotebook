@@ -1,5 +1,5 @@
 [workspace]
-members = ["quotebook-core", "program", "sdk", "maker", "cli", "lint-control"]
+members = ["quotebook-core", "program", "sdk", "maker", "cli", "lint-control", "test-programs/probe"]
 resolver = "2"
 
 [workspace.package]
