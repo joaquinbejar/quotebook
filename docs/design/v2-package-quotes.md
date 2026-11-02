@@ -14,8 +14,9 @@ v2 signs the package as a whole, so its legs can only be filled together, in the
 
 ## Signed message
 
-The ed25519 message stays 208 bytes, so the precompile instruction and its self-contained
-parser (`sigverify`) are reused unchanged; only the domain and the layout behind it differ.
+The ed25519 message stays 208 bytes, so the precompile instruction layout and its
+self-contained checks are shared with v1; only the domain and the layout behind it differ.
+The parser itself has to be split for that (see Signature parsing).
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |
@@ -42,6 +43,29 @@ parser (`sigverify`) are reused unchanged; only the domain and the layout behind
   `settle_package` rejects v1. No leg of a package can be taken alone.
 - **Ratio:** a fill of `k` units moves `k × lots_per_unit` base lots on every leg. Integer
   multiples avoid any rounding between legs.
+
+## Signature parsing
+
+Today `sigverify::verified_quote` does, in this order: exactly one signature record
+(`MalformedSigVerify`), every instruction index `0xFFFF` (`SigVerifyNotSelfContained`), a
+208-byte message (`QuoteLengthMismatch`), the signature, key and message ranges inside the
+data (`MalformedSigVerify`), then `Quote::decode` on the message (its v1 domain and field
+errors) and the signing key equal to `quote.maker` (`SignerMismatch`). The last two steps are
+v1 specific, so v2 cannot call it as it is.
+
+The code splits it in two layers:
+
+- **`verified_message(data) -> (key, message)`:** the domain-free part, the first four steps
+  above with the same errors in the same order. It returns the 32-byte key and the 208-byte
+  message exactly as the precompile verified them.
+- **`verified_quote`:** `verified_message`, then `Quote::decode`, then the maker binding. Same
+  signature, same errors, same order as today: a pure refactor for v1.
+- **`verified_package`:** `verified_message`, then the v2 header decode (`WrongDomain` for any
+  other domain, `MalformedQuote` for nonzero reserved bytes or zero units), then the signing
+  key equal to the header's maker (`SignerMismatch`).
+
+The 208-byte length check stays in the shared layer because both headers are 208 bytes; a
+future header of another size would move it to the domain layer.
 
 ## Canonical validation
 
@@ -79,7 +103,8 @@ Instruction `[ed25519 precompile, settle_package]`, like v1.
   maker base, maker quote, taker base, taker quote, and the fee account when that series has
   `fee_bps > 0`.
 - **Checks, in order:**
-  1. the precompile instruction verifies as today, with the v2 domain;
+  1. `verified_package` (Signature parsing): the self-contained precompile checks, the v2
+     header and the maker binding;
   2. the canonical rules above, then `sha256` of the legs (from the args and the series
      accounts) equals `package_hash`; `sol_sha256` is a syscall, so this adds no dependency;
   3. header binding: program, deployment, taker (or open), clock window, `expires_at −
@@ -174,6 +199,12 @@ maker would need two cancel paths for one intent ("cancel everything").
 
 ## Tests to write with the code
 
+- Signature parsing: every existing `sigverify` test passes unchanged against the refactored
+  `verified_quote` (same errors, same order). Cross domain: a v1 message given to
+  `verified_package` and a v2 header given to `verified_quote` both fail `WrongDomain`, on chain
+  through `settle` and `settle_package`. Key binding: a v2 header signed by a key other than
+  its maker fails `SignerMismatch`. The self-contained and range cases run on both paths, and
+  the `sigverify` fuzz target covers both.
 - The hash: Rust and TS vectors, and a mutation of every leg field and the leg order.
 - Canonical validation: one rejection per rule of the table, each from a valid package with
   one change: leg count 0 and `MAX_LEGS + 1`, a trailing or missing args byte, side 2, a zero
