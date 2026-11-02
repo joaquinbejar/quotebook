@@ -1,0 +1,55 @@
+# libFuzzer targets on quotebook-core (docs/PLAN-improvements.md, I6). Outside the main
+# workspace: cargo-fuzz needs nightly (pinned in rust-toolchain.toml here), the workspace stays
+# on stable. Run with `make fuzz` / `make fuzz-check` from the repository root.
+[package]
+name = "quotebook-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+# Checked on crates.io 2026-11-02 (max_stable_version): libfuzzer-sys 0.4.13, arbitrary 1.5.0;
+# bytemuck as in the workspace.
+libfuzzer-sys = "0.4"
+bytemuck = "1.25"
+arbitrary = { version = "1.5", features = ["derive"] }
+quotebook-core = { path = "../quotebook-core" }
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[[bin]]
+name = "sigverify"
+path = "fuzz_targets/sigverify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "quote_decode"
+path = "fuzz_targets/quote_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "instruction_args"
+path = "fuzz_targets/instruction_args.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "accounts_decode"
+path = "fuzz_targets/accounts_decode.rs"
+test = false
+doc = false
+bench = false

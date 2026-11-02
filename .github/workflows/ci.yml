@@ -5,7 +5,10 @@
 # The jobs' union is exactly `make pre-push`: `checks` (everything but `test`) and `test`.
 # `bench` regenerates the CU table and requires the committed one. `verifiable` rebuilds the
 # program in scripts/verifiable/Dockerfile and requires the hash recorded in
-# docs/verifiable-build.md. There is no branch
+# docs/verifiable-build.md. `fuzz-corpus` replays the committed libFuzzer corpus (fuzz/,
+# nightly pinned in fuzz/rust-toolchain.toml) and requires that the sigverify corpus reaches
+# every rejection branch; the long fuzz runs are on demand (`make fuzz-long`,
+# docs/fuzzing.md). There is no branch
 # protection on quotebook (required CI on main is for optfix only); a PR is merged only when
 # every job is green, as a process rule.
 #
@@ -78,3 +81,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: reproducible build hashes to docs/verifiable-build.md
         run: make verifiable-check
+
+  fuzz-corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Nightly (fuzz/rust-toolchain.toml) and cargo-fuzz 0.13.2
+        run: |
+          (cd fuzz && rustup toolchain install)
+          cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: replay the committed corpus; the sigverify corpus reaches every branch
+        run: make fuzz-check

@@ -1,0 +1,4 @@
+# cargo-fuzz (libFuzzer, -Zsanitizer) needs nightly. Pinned; only this crate uses it, the
+# workspace stays on stable (docs/PLAN-improvements.md, I6: the recorded rule exception).
+[toolchain]
+channel = "nightly-2026-10-11"

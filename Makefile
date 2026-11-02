@@ -83,6 +83,33 @@ verifiable-check: verifiable
 	if [ -z "$$want" ] || [ "$$want" != "$$got" ]; then \
 		echo "verifiable-check: built $$got, docs/verifiable-build.md records '$$want'"; exit 1; fi; \
 	echo "verifiable-check: $$got matches docs/verifiable-build.md"
+# libFuzzer targets on quotebook-core (fuzz/, its own workspace on the nightly pinned in
+# fuzz/rust-toolchain.toml; docs/PLAN-improvements.md, I6). Not part of pre-push.
+FUZZ_TARGETS = sigverify quote_decode instruction_args accounts_decode
+FUZZ_TIME ?= 60
+
+# Fuzz every target for FUZZ_TIME seconds each, growing the committed corpus.
+.PHONY: fuzz
+fuzz:
+	@cd fuzz && for t in $(FUZZ_TARGETS); do \
+		mkdir -p corpus/$$t; \
+		cargo fuzz run $$t corpus/$$t -- -max_total_time=$(FUZZ_TIME) || exit 1; \
+	done
+
+# Replay the committed corpus of every target (no new inputs), then require that the
+# sigverify corpus reaches every rejection branch of `verified_quote`.
+.PHONY: fuzz-check
+fuzz-check:
+	@cd fuzz && for t in $(FUZZ_TARGETS); do \
+		cargo fuzz run $$t corpus/$$t -- -runs=0 || exit 1; \
+	done
+	@cd fuzz && cargo test --release -- --nocapture
+
+# The long run: one hour per fuzz target and 10,000 sequences of the stateful settle test.
+.PHONY: fuzz-long
+fuzz-long: program
+	$(MAKE) fuzz FUZZ_TIME=3600
+	QUOTEBOOK_PROPTEST_CASES=10000 cargo test $(CARGO_FLAGS) -p quotebook-program --test conservation -- --nocapture
 
 # Run every test, including the LiteSVM program tests (which load target/deploy, so `make
 # program` runs first). QUOTEBOOK_PROPTEST_CASES=<n> overrides the property-test case count.
