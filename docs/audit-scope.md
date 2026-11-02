@@ -111,8 +111,9 @@ The repository's own evidence for these:
 4. **Token-2022.** Is the mint extension allowlist (PLAN 3.3) complete and safe as the token
    program evolves? An unknown future extension type is rejected, so the allowlist fails
    closed.
-5. **The fee path** (I10, once frozen): the rounding direction (against the taker) and the
-   Config-PDA-owned fee account check.
+5. **The fee path** (I10, once frozen): the fee rounds down (floor), in the taker's favour
+   (ADR 0001), so dust trades pay no fee; is that acceptable, and is the Config-PDA-owned fee
+   account check complete?
 
 ## Freeze checklist
 
