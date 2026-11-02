@@ -112,6 +112,15 @@ There is a new instruction, `withdraw_fees` (tag 8).
 
 ## Tests and measurements
 
+- **Two-transfer edges:**
+  - On an Ask, the taker's total `quote_atoms + fee` uses checked addition and is rejected
+    with `Overflow` before any transfer. Test: `quote_atoms` near `u64::MAX` with a non-zero
+    `fee_bps`.
+  - On a Bid, the split is two transfers out of the maker's account: `quote_atoms - fee` to the
+    taker and `fee` to the fee account. If the second transfer fails, the whole instruction
+    rolls back. Test: a fee account that rejects the transfer (a Token-2022 account with
+    MemoTransfer, frozen or closed). Assert that the first transfer is undone, so every
+    balance and the maker's allowance are byte-identical, and the nonce is unused.
 - **Amounts:** unit and property tests of `fee` and `quote_atoms - fee`, against an exact
   rational reference:
   - the floor;

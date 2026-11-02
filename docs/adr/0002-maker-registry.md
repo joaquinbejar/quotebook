@@ -80,6 +80,11 @@ Validation, in the program and in the client decoder:
   - without it, every listed maker is asked;
   - each quote is checked as today: signature, every on-chain rule, then ranking. A registry
     entry grants nothing: a quote from a listed maker is verified exactly like any other.
+- **Identity binding** (Codex, ADR review). A quote obtained through a discovered endpoint is
+  accepted only if its signed `quote.maker` equals the maker of the profile the endpoint came
+  from. `--allow` applies to that verified `quote.maker` as well, not only to the profile list.
+  Otherwise an allowlisted profile, or a compromised endpoint, could return another maker's
+  valid quote. `taker::check` gains an expected-maker argument for this.
 - **Untrusted input:** the endpoint and the name are maker-provided text. The taker CLI treats
   them like the maker service's messages: never echoed unredacted in errors, and connected to
   only over `wss://`.
@@ -105,7 +110,9 @@ Validation, in the program and in the client decoder:
 - **Decoder fuzzing:** the profile decoder joins I6's `accounts_decode` target, as a structured
   layout with an accepting path.
 - **Discovery:** a taker-CLI test over a LiteSVM-backed RPC mock, with valid profiles, invalid
-  ones and the allowlist.
+  ones and the allowlist. A mock endpoint that returns another maker's valid quote is rejected,
+  both with and without `--allow`. So is an allowlisted endpoint returning an unallowlisted
+  maker's quote.
 - **CU:** `set_profile` (create and update) and `close_profile` rows in `make bench`.
 
 ## Alternatives considered
