@@ -1,6 +1,6 @@
 //! Instruction builders, one per program instruction, in the account order of the program's
 //! handler modules. Plus [`approve_delegate`], the token-program instruction a maker sends
-//! once so `settle` can pay from its account.
+//! once so `settle` can pay from its account, and [`revoke_delegate`], which withdraws it.
 
 use quotebook_core::instruction::{CreateSeriesArgs, SettleArgs, Tag};
 use quotebook_core::{BaseLots, Nonce, Quote};
@@ -216,6 +216,22 @@ pub fn approve_delegate(
             AccountMeta::new(*source, false),
             AccountMeta::new_readonly(pda::delegate(program_id, maker).0, false),
             AccountMeta::new_readonly(*maker, true),
+        ],
+    )
+}
+
+/// SPL Token / Token-2022 `Revoke` (tag 5): removes the delegate of `source`, so `settle` can
+/// no longer pay from it. The incident step for a compromised maker key or service
+/// (docs/runbooks.md): it stops every fill from that account in one transaction, whatever
+/// quotes are outstanding.
+#[must_use]
+pub fn revoke_delegate(token_program: &Address, source: &Address, owner: &Address) -> Instruction {
+    Instruction::new_with_bytes(
+        *token_program,
+        &[5u8],
+        vec![
+            AccountMeta::new(*source, false),
+            AccountMeta::new_readonly(*owner, true),
         ],
     )
 }

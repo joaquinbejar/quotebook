@@ -124,6 +124,23 @@ pub fn approve(
     send(rpc, &[ix], payer, &[maker])
 }
 
+/// Token `Revoke` on `token_account`, signed by `maker`: the delegate PDA can no longer move
+/// anything out of it. The token program is read from the account.
+///
+/// # Errors
+///
+/// The RPC errors.
+pub fn revoke(
+    rpc: &mut dyn Rpc,
+    maker: &Keypair,
+    payer: &Keypair,
+    token_account: &Address,
+) -> Result<Signature, CliError> {
+    let program = crate::rpc::existing(rpc, token_account)?.owner;
+    let ix = ix::revoke_delegate(&program, token_account, &maker.pubkey());
+    send(rpc, &[ix], payer, &[maker])
+}
+
 /// `cancel_all`: every nonce of `maker` below `new_min` stops being fillable.
 ///
 /// # Errors
