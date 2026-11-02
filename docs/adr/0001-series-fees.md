@@ -118,9 +118,14 @@ There is a new instruction, `withdraw_fees` (tag 8).
     `fee_bps`.
   - On a Bid, the split is two transfers out of the maker's account: `quote_atoms - fee` to the
     taker and `fee` to the fee account. If the second transfer fails, the whole instruction
-    rolls back. Test: a fee account that rejects the transfer (a Token-2022 account with
-    MemoTransfer, frozen or closed). Assert that the first transfer is undone, so every
-    balance and the maker's allowance are byte-identical, and the nonce is unused.
+    rolls back.
+  - Test the reachable second-CPI failure (Codex): give the maker's quote account an
+    allowance, or a balance, enough for `quote_atoms - fee` but not for the full
+    `quote_atoms`. The transfer to the taker succeeds inside the instruction, then the fee
+    transfer fails in the token program. Assert that every balance, the maker's allowance and
+    the nonce are as before the transaction.
+  - A rejecting fee account (MemoTransfer, frozen, closed) fails the account validation before
+    any transfer. That case is covered by the negative tests, not by this one.
 - **Amounts:** unit and property tests of `fee` and `quote_atoms - fee`, against an exact
   rational reference:
   - the floor;
