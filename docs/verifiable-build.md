@@ -80,3 +80,8 @@ The program and core code is unchanged since `898c173`, so this upgrade changes 
 behaviour. Every account, the program id and outstanding quotes are unaffected. The
 temporary buffer account was consumed by the upgrade (`solana program show --buffers` lists
 none).
+
+Smoke test after the upgrade: a `settle` on series 0 (`6XjcD…pGh7`) filled 1 lot at 2,565 ticks
+from maker `5btd…mWW5` to taker `3ZBj…sqLs`, using 8,595 CU, the same as on the macOS build:
+`a9NdJwwzp3X4MnxDbYydsv2bnD6q9GLSDXKXfTrcMb4R5mKuT6XEpmB7mpGTUaVKjiETyRcwXhQJfvMX89cGgho`.
+The maker service was stopped by PID afterwards.
