@@ -1,7 +1,8 @@
 # v2 package quotes (design)
 
-**Status:** draft design, milestone L1 of [`PLAN-improvements.md`](../PLAN-improvements.md).
-No code is planned in this phase. For review by Codex and SOLANA-PROJECTS.
+**Status:** approved design (Codex, #35), milestone L1 of
+[`PLAN-improvements.md`](../PLAN-improvements.md). No code is planned in this phase; its
+product questions are decided (see Decisions).
 
 ## Problem
 
@@ -256,12 +257,13 @@ maker would need two cancel paths for one intent ("cancel everything").
   `PackageTooLarge` and `TooManyAccounts` errors on the first package past each boundary.
 - Fuzzing: the header decoder and the leg args join the I6 targets.
 
-## Open questions
+## Decisions
 
-1. Should the header carry a package-level fee override, or only the per-leg series fees?
-   The draft uses per-leg fees only: no new admin power, and the fee stays immutable per
-   series.
-2. Should legs on different quote mints be allowed? It costs transaction space (above) but
-   no new rule. The draft allows them.
-3. The package event: a new `qb-pkg1` tag, or a version bump of the fill event with a
-   package field? The draft keeps `FillEvent` unchanged so v1 indexers keep working.
+SOLANA-PROJECTS accepted the three drafts (2026-11-02, msg 46504):
+
+1. **Fees:** no package-level fee override. Each leg pays its own series' fee (ADR 0001), so
+   there is no new admin power and the fee stays immutable per series.
+2. **Quote mints:** legs on different quote mints are allowed. It costs transaction space
+   (see Limits) but adds no rule.
+3. **Events:** a new `qb-pkg1` package event. `FillEvent` stays unchanged, so v1 indexers
+   keep working.
