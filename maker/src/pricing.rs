@@ -5,7 +5,9 @@
 //! The model's parameters are absolute: its spread term `(2/γ) ln(1 + γ/k)` is in price
 //! units, so one set of defaults cannot suit every price level (at a 1.20 mid the old defaults
 //! put the quote 54% away; at 3,000 they would quote about 0.04% wide). Two things fix that:
-//! - the model runs on the mid normalized to [`MODEL_MID`], and its prices are scaled back;
+//! - by default ([`ModelUnits::Relative`]) the model runs on the mid normalized to
+//!   [`MODEL_MID`], and its prices are scaled back. Explicit absolute overrides
+//!   ([`ModelUnits::Absolute`]) run it on the actual mid, as before;
 //! - whatever the model returns, the half-spread is clamped to
 //!   `[min_half_spread_bps, max_half_spread_bps]` of the mid, and the reservation price to
 //!   within `max_skew_bps` of it.
@@ -41,13 +43,13 @@ pub const MODEL_MID: Decimal = Decimal::from_parts(100, 0, 0, false, 0);
 /// fields are basis points of the mid (1 bp = 0.0001).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PricingParams {
-    /// Risk aversion, gamma. Absolute; an advanced override.
+    /// Risk aversion, gamma, in [`ModelUnits`].
     pub risk_aversion: Decimal,
-    /// Annualized volatility. Absolute; an advanced override.
+    /// Annualized volatility, in [`ModelUnits`].
     pub volatility: Decimal,
     /// Time to the strategy's horizon, in milliseconds.
     pub time_to_terminal_ms: u64,
-    /// Order intensity, k. Absolute; an advanced override.
+    /// Order intensity, k, in [`ModelUnits`].
     pub order_intensity: Decimal,
     /// Largest accepted `|price - mid| / mid` of a rounded price, as a fraction.
     pub max_deviation: Decimal,
@@ -57,6 +59,20 @@ pub struct PricingParams {
     pub max_half_spread_bps: u32,
     /// Cap of `|reservation - mid|`, in bps of the mid.
     pub max_skew_bps: u32,
+    /// The units of `risk_aversion`, `volatility` and `order_intensity`.
+    pub model_units: ModelUnits,
+}
+
+/// How the model's parameters are read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelUnits {
+    /// The model runs on the mid normalized to [`MODEL_MID`] and its prices scale back by
+    /// `mid / MODEL_MID`, so the parameters are those of an asset priced 100 and mean the same
+    /// at every price level. The default.
+    Relative,
+    /// The model runs on the actual mid, as before I12: the parameters are in the asset's own
+    /// price units (the absolute advanced overrides). The bps clamps still apply.
+    Absolute,
 }
 
 impl PricingParams {
@@ -73,6 +89,7 @@ impl PricingParams {
             min_half_spread_bps: 5,
             max_half_spread_bps: 100,
             max_skew_bps: 100,
+            model_units: ModelUnits::Relative,
         }
     }
 
@@ -212,10 +229,14 @@ pub fn clamped_prices(
     if mid <= Decimal::ZERO {
         return Err(PricingError::BadReference);
     }
-    // The model runs on the mid normalized to MODEL_MID and its prices scale back by
-    // `mid / MODEL_MID`, so its absolute parameters mean the same thing at every price level.
+    // Relative: the model runs on the mid normalized to MODEL_MID and its prices scale back
+    // by `mid / MODEL_MID`. Absolute: it runs on the mid itself (scale 1).
+    let model_mid = match params.model_units {
+        ModelUnits::Relative => MODEL_MID,
+        ModelUnits::Absolute => mid,
+    };
     let (bid, ask) = calculate_optimal_quotes(
-        MODEL_MID,
+        model_mid,
         inventory,
         params.risk_aversion,
         params.volatility,
@@ -225,10 +246,12 @@ pub fn clamped_prices(
     .map_err(|e| PricingError::Model(e.to_string()))?;
     let two = Decimal::new(2, 0);
     let overflow = || PricingError::Overflow;
-    let scale = |v: Decimal| {
-        v.checked_mul(mid)
+    let scale = |v: Decimal| match params.model_units {
+        ModelUnits::Relative => v
+            .checked_mul(mid)
             .and_then(|x| x.checked_div(MODEL_MID))
-            .ok_or_else(overflow)
+            .ok_or_else(overflow),
+        ModelUnits::Absolute => Ok(v),
     };
     let reservation = scale(
         bid.checked_add(ask)

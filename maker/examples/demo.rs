@@ -72,6 +72,7 @@ pub async fn run() -> Report {
                 min_half_spread_bps: 5,
                 max_half_spread_bps: 100,
                 max_skew_bps: 100,
+                model_units: quotebook_maker::pricing::ModelUnits::Relative,
             },
             ttl: Seconds::new(30),
             max_size: BaseLots::new(1_000),

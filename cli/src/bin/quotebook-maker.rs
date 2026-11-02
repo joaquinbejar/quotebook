@@ -6,13 +6,16 @@
 //!   --mid <PRICE> [--ttl 30] [--max-size 1000] [--risk-aversion 0.1] [--volatility 0.6]
 //!   [--horizon-ms 3600000] [--order-intensity 1.5] [--max-deviation 0.05]
 //!   [--min-half-spread-bps 5] [--max-half-spread-bps 100] [--max-skew-bps 100]
+//!   [--model-units relative|absolute]
 //!   [--max-ttl-any-series <SECONDS>]
 //! ```
 //!
 //! The spread is bounded in basis points of the mid (`--min/--max-half-spread-bps`, and the
 //! inventory skew by `--max-skew-bps`), so the defaults fit any price level. The model flags
-//! (`--risk-aversion`, `--volatility`, `--order-intensity`) are absolute advanced overrides;
-//! the bps bounds apply to them too. Startup fails unless `0 < min <= max half-spread`,
+//! (`--risk-aversion`, `--volatility`, `--order-intensity`) are read in `--model-units`:
+//! `relative` (the model runs on the mid normalized to 100, the default when none of them is
+//! given) or `absolute` (the asset's own price units, as before I12, the default when any is
+//! given). The bps bounds apply in both. Startup fails unless `0 < min <= max half-spread`,
 //! `0 < max-deviation < 2/3` and `(max-half-spread + max-skew) / 10000 <= max-deviation / 2`.
 //!
 //! Every start resumes fail-closed: no quotes for `max_ttl_any_series + 10 s` (70 s at 60 s),
@@ -26,12 +29,31 @@ use quotebook_cli::maker::{prepare, refresh, ClusterClock, MakerSettings};
 use quotebook_cli::rpc::Cluster;
 use quotebook_cli::{keys, CliError};
 use quotebook_core::{BaseLots, Seconds};
-use quotebook_maker::pricing::PricingParams;
+use quotebook_maker::pricing::{ModelUnits, PricingParams};
 use rust_decimal::Decimal;
 
 fn decimal(args: &Args, name: &str, default: &str) -> Result<Decimal, CliError> {
     let v = args.opt(name).unwrap_or(default);
     Decimal::from_str(v).map_err(|_| CliError::Args(format!("--{name}: cannot parse {v:?}")))
+}
+
+/// `--model-units`, or by default `absolute` when any model flag is given (its historical
+/// meaning) and `relative` otherwise.
+fn model_units(args: &Args) -> Result<ModelUnits, CliError> {
+    match args.opt("model-units") {
+        Some("relative") => Ok(ModelUnits::Relative),
+        Some("absolute") => Ok(ModelUnits::Absolute),
+        Some(other) => Err(CliError::Args(format!(
+            "--model-units: expected relative or absolute, got {other:?}"
+        ))),
+        None if ["risk-aversion", "volatility", "order-intensity"]
+            .iter()
+            .any(|f| args.opt(f).is_some()) =>
+        {
+            Ok(ModelUnits::Absolute)
+        }
+        None => Ok(ModelUnits::Relative),
+    }
 }
 
 fn run() -> Result<(), CliError> {
@@ -55,6 +77,7 @@ fn run() -> Result<(), CliError> {
             min_half_spread_bps: args.parse_or("min-half-spread-bps", 5u32)?,
             max_half_spread_bps: args.parse_or("max-half-spread-bps", 100u32)?,
             max_skew_bps: args.parse_or("max-skew-bps", 100u32)?,
+            model_units: model_units(&args)?,
         },
         ttl,
         max_size: BaseLots::new(args.parse_or("max-size", 1_000u64)?),

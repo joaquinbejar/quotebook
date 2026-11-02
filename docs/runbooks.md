@@ -96,7 +96,11 @@ target/release/quotebook-maker $QB --series <SERIES> --maker <MAKER_KEYPAIR> \
 - a `quotebook-taker quote` before that time fails with `RateLimited`.
 
 **Pricing is relative to the mid** (I12):
-- The model runs on the mid normalized to 100, and its prices are scaled back.
+- `--model-units relative` (the default when no model flag is given): the model runs on the
+  mid normalized to 100, and its prices are scaled back.
+- Passing `--risk-aversion`, `--volatility` or `--order-intensity` switches the default to
+  `--model-units absolute`, their pre-I12 meaning in the asset's own price units. The bps
+  bounds still apply.
 - `--min-half-spread-bps` / `--max-half-spread-bps` (default 5 / 100) bound the half-spread,
   and `--max-skew-bps` (default 100) bounds the inventory skew.
 - The deviation guard (`--max-deviation`, default 5%) checks the **rounded** prices.

@@ -228,3 +228,55 @@ proptest! {
         prop_assert_eq!(got.as_ref().map(|_| ()).map_err(name), want);
     }
 }
+
+/// The two model unit modes, unclamped (caps opened wide) at a mid other than 100, against
+/// direct calls of the model: `Absolute` is exactly the pre-I12 call on the actual mid,
+/// `Relative` is the call at 100 scaled by `mid / 100`.
+#[test]
+fn test_model_units_against_the_direct_model_call() {
+    use market_maker_rs::strategy::avellaneda_stoikov::calculate_optimal_quotes;
+    use quotebook_maker::pricing::{ModelUnits, MODEL_MID};
+    let (mid, inventory) = (d("25"), d("3"));
+    let wide = |model_units| PricingParams {
+        min_half_spread_bps: 1,
+        max_half_spread_bps: 10_000,
+        max_skew_bps: 10_000,
+        model_units,
+        ..PricingParams::relative_defaults()
+    };
+    let direct = |at: Decimal, p: &PricingParams| {
+        let (b, a) = calculate_optimal_quotes(
+            at,
+            inventory,
+            p.risk_aversion,
+            p.volatility,
+            p.time_to_terminal_ms,
+            p.order_intensity,
+        )
+        .unwrap();
+        ((b + a) / Decimal::TWO, (a - b) / Decimal::TWO)
+    };
+
+    let abs = wide(ModelUnits::Absolute);
+    let c = clamped_prices(mid, inventory, &abs).unwrap();
+    let (r, h) = direct(mid, &abs);
+    assert_eq!(
+        (c.reservation, c.half_spread),
+        (r, h),
+        "absolute = the pre-I12 call"
+    );
+
+    let rel = wide(ModelUnits::Relative);
+    let c = clamped_prices(mid, inventory, &rel).unwrap();
+    let (r, h) = direct(MODEL_MID, &rel);
+    assert_eq!(
+        (c.reservation, c.half_spread),
+        (r * mid / MODEL_MID, h * mid / MODEL_MID),
+        "relative = the call at 100, scaled"
+    );
+    // The two differ at a mid other than 100: absolute's spread term is in price units.
+    assert_ne!(
+        clamped_prices(mid, inventory, &abs).unwrap().half_spread,
+        clamped_prices(mid, inventory, &rel).unwrap().half_spread
+    );
+}

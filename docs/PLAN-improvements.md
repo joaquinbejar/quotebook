@@ -484,6 +484,10 @@ tight.
   - `max_skew_bps`, the cap on how far inventory may move the reservation price from the mid.
   The service derives the model's price-unit parameters from the mid at each quote, so one
   set of defaults works at any price level.
+  Implemented (PR #29) as `ModelUnits`. `Relative`, the default, runs the model on the mid
+  normalized to 100 and scales its prices back. `Absolute` runs it on the actual mid: the
+  absolute overrides keep their pre-I12 meaning. The CLI picks `Absolute` when any model flag
+  is given, or as set by `--model-units`.
 - **Precedence**, in order:
   1. the model computes a reservation price and a half-spread, from the defaults or from
      the absolute advanced overrides (the existing flags, documented as absolute);
