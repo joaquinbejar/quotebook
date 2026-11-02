@@ -256,6 +256,40 @@ fn test_ask_total_overflow_is_rejected_before_any_transfer() {
 }
 
 #[test]
+fn test_bid_near_u64_max_settles_with_exact_balances() {
+    // The same price as the Ask overflow above. A Bid moves only `quote` in total (proceeds
+    // plus fee), so it must settle (Codex I10-02: it used to fail `Overflow`).
+    let mut m = fee_market(MarketSpec::default());
+    let price = u64::MAX / 10 - 1;
+    let quote = price * 10; // fill 1 × quote_lot 10
+    let fee = quote / 100; // 100 bps, floor
+    let base = 1_000; // fill 1 × base_lot 1,000
+    let (qm, qp) = (m.quote_mint, m.quote_program);
+    let (maker, taker) = (m.maker.pubkey(), m.taker.pubkey());
+    let delegate = delegate_address(&maker);
+    // The maker holds and approves exactly `quote`; the taker starts with no quote atoms.
+    let maker_quote = token_account_data(&qm, &maker, quote, Some((&delegate, quote)), 1, &[]);
+    m.env.set(m.maker_quote, qp, maker_quote);
+    m.env.set(
+        m.taker_quote,
+        qp,
+        token_account_data(&qm, &taker, 0, None, 1, &[]),
+    );
+    let t = QuoteTerms {
+        side: Side::Bid,
+        price: QuoteLotsPerBaseLot::new(price),
+        ..m.terms()
+    };
+    let [mb, mq, tb, tq, fa] = five(&m);
+    assert_eq!((mq, tq, fa), (quote, 0, 0));
+    let meta = m.settle(t, 1).unwrap();
+    assert_eq!(five(&m), [mb + base, 0, tb - base, quote - fee, fee]);
+    assert_eq!(allowance(&m, &m.maker_quote), 0);
+    let ev = event_of(&meta);
+    assert_eq!((ev.quote_atoms, ev.fee), (quote, fee));
+}
+
+#[test]
 fn test_bid_second_transfer_failure_rolls_everything_back() {
     let mut m = fee_market(MarketSpec::default());
     let t = priced(&m, Side::Bid);

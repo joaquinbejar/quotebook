@@ -195,9 +195,13 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
     } else {
         fee::fee(quote_atoms, fee_bps).ok_or(custom(QuotebookError::Overflow))?
     };
-    quote_atoms
-        .checked_add(fee)
-        .ok_or(custom(QuotebookError::Overflow))?;
+    // Only an Ask moves `quote_atoms + fee` (the taker pays both). A Bid moves `quote_atoms`
+    // in total from the maker, split into the proceeds and the fee, so it has no such sum.
+    if terms.side == Side::Ask {
+        quote_atoms
+            .checked_add(fee)
+            .ok_or(custom(QuotebookError::Overflow))?;
+    }
     let taker_proceeds = quote_atoms
         .checked_sub(fee)
         .ok_or(custom(QuotebookError::Overflow))?;
