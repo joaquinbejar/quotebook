@@ -1,6 +1,6 @@
 # quotebook: improvement plan
 
-Status: **draft r1, for Codex review**. GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
+Status: **draft r2, for Codex review**. GO from SOLANA-PROJECTS, msg 43338 (2026-11-02).
 Baseline: `main` at `4b3751f` (v0.1.1 on crates.io; program `3Aq1Aw…6mbo` on devnet, built
 from `898c173`). `docs/PLAN.md` stays the v1 design record; this file plans the work after v1.
 
@@ -14,7 +14,8 @@ Effort: **S** up to a day, **M** two to four days, **L** more than that.
 
 ## Facts this plan relies on (checked 2026-11-02)
 
-- **Version drift: none on `main`.** `Cargo.toml:6` is `version = "0.1.1"` and every
+- **Version drift: none on `main`** (confirmed by SOLANA-PROJECTS, msg 43378: its information
+  was stale). `Cargo.toml:6` is `version = "0.1.1"` and every
   `quotebook-*` entry in `Cargo.lock` is 0.1.1. What does lag is the devnet binary: it was
   built from `898c173` (before the 0.1.0 bump). `git diff --stat 898c173 4b3751f -- program
   quotebook-core Cargo.lock` shows only the version lines of `Cargo.lock` and the new
@@ -121,8 +122,8 @@ Copy optfix's workflow and composite action, adapted to quotebook's `make pre-pu
   - move the upgrade authority and the admin to them;
   - check with `solana program show` and the config account;
   - leave the payer as it is.
-  Squads itself is not used on devnet in this milestone. A Squads devnet rehearsal can follow
-  if SOLANA-PROJECTS wants one.
+  Plain keys are enough on devnet for this phase (SOLANA-PROJECTS, msg 43378). A Squads devnet
+  rehearsal is a gated pre-mainnet item: listed in `docs/governance.md`, not done here.
 - **No mainnet action.**
 
 ### I4. Runbooks (S)
@@ -268,34 +269,40 @@ Two layers. The fast one runs in `make pre-push`; the slow one runs on demand.
   - a TS-built `[precompile, settle]` transaction settles in LiteSVM, through a small Rust
     test that loads the TS output.
 
-### I9. RFQ demo on a metalbook series (S, plus dependencies)
+### I9. RFQ demo on a metalbook series (S; runs before Nov 13 21:00Z)
+
+The demo needs no new code: it uses the existing `quotebook-admin`, `quotebook-maker` and
+`quotebook-taker`. It is scheduled right after I1, because the metalbook series it trades
+expires on Fri 2026-11-13 21:00Z.
+
+**Accounts, provided by metalbook's window (msg 43382):**
+
+| Item | Value |
+| --- | --- |
+| metalbook series | XAG capped call, 1 oz, strike 50, cap 55, expiry 1794603600: `B66MftMja6L6g2XFNLWHUWE2Rjq1yTHtToWQTvxsZx21` |
+| long mint | `AF3A2Rt57QPYXnXg42nBNTN2TLP8GoMjp94ZVYVyjH4x` (SPL Token, 0 decimals) |
+| maker | metalbook's devnet maker `7tVP…cACQ` (decided by SOLANA-PROJECTS, msg 43378). It holds the 3 long tokens and 15 USDC. |
+| taker | quotebook's `3ZBj1qBpdoH5NrMTwAHq2fY6Hbo5M1GURxaP9y8bsqLs`, holding 10 USDC |
 
 **Demo series:** a quotebook series with these parameters:
 
 | Parameter | Value |
 | --- | --- |
-| base | a metalbook long-token mint (0 decimals) |
+| base | the long mint |
 | `base_lot` | 1 |
-| quote | Circle devnet USDC |
+| quote | Circle devnet USDC `4zMM…ncDU` |
 | `quote_lot` | 10,000 (a 0.01 USDC tick) |
 | `min_size` | 1 |
 | `max_quote_ttl` | 60 s |
 
-**The fill:** the maker writes metalbook contracts, holds the long tokens and asks with the
-CLI maker's fixed mid, taken from metalbook-maker's theoretical price for that series. The
-taker buys one long token for USDC. Recorded in `docs/devnet.md`, with a cross-link for
-metalbook's devnet log.
+**The run:**
+1. `init_maker` for 7tVP….
+2. 7tVP… approves its delegate PDA on its long-token account, for 3.
+3. The CLI maker asks with a fixed mid from metalbook-maker's theoretical price for the series.
+4. The taker buys 1 long token for USDC.
 
-**Dependencies, to be resolved through SOLANA-PROJECTS before this milestone starts:**
-
-- **A live faucet-sized series.** Every 1 oz series has expired, and 50 oz XAG needs 240+
-  USDC. metalbook's window lists a 1 oz XAG series with a Nov 13 or later expiry, as it did
-  for Oct 30.
-- **Which key makes.** The metalbook devnet maker (`7tVP…`, 40 USDC) already writes. If it
-  may also make on quotebook, it needs `init_maker` and a delegate approval of its long-token
-  account. The alternative is the quotebook maker (`5btd…`), funded with USDC and
-  writing its own contracts.
-- **Taker USDC:** a few USDC to `3ZBj…` from the faucet or from the metalbook maker.
+7tVP…'s key belongs to metalbook's window, so every step it signs is announced to that window
+first. The run is recorded in `docs/devnet.md`, with a cross-link for metalbook's devnet log.
 
 Not a hosted service: a scripted, reproducible run. A hosted maker priced from Pyth is out of
 scope here.
@@ -309,7 +316,8 @@ Codex and SOLANA-PROJECTS before any code.
 
 - **`fee_bps`:** `fee_bps: u16` takes the first 2 of `Series._reserved`'s 8 bytes.
   - It is set by `create_series` and never changed: there is no instruction that writes it.
-  - It is capped at `MAX_FEE_BPS = 100`.
+  - It is capped at `MAX_FEE_BPS = 100`, and devnet series default to 0 (both agreed by
+    SOLANA-PROJECTS, msg 43378, as is the taker-paid fee).
   - Existing series read 0, so they need no migration and their CU is unchanged. The account
     `VERSION` stays 1.
 - **Why immutable:** a quote binds its series address, so an immutable fee means the signed
@@ -405,16 +413,14 @@ I5's audit commit is frozen at that point.
 | I6 | Fuzzing + conservation property test | M | I1 |
 | I7 | Fill event | S | I6 |
 | I8 | TS SDK + Rust vectors | M | I7 |
-| I9 | metalbook RFQ demo | S | external dependencies |
+| I9 | metalbook RFQ demo (before 2026-11-13 21:00Z) | S | I1; metalbook accounts ready |
 | I10 | Fee and registry ADRs, then code, then devnet upgrade | S + M | I6, I7 |
 | I11 | Release 0.2.0 | S | I10, GO |
 | L1 | v2 package quotes design | L (design only) | I10 |
 
-## Open questions for SOLANA-PROJECTS
+## Questions answered by SOLANA-PROJECTS (msg 43378)
 
-1. **Version drift.** There is none on `main` (see Facts). Did msg 43338 mean the devnet
-   binary, which I2 covers, or something else?
-2. **I9 dependencies:** the metalbook 1 oz series, which maker key, and taker USDC.
-3. **I3:** is a devnet rehearsal with two plain keys enough, or should Squads also be
-   rehearsed on devnet?
-4. **I10 fees:** is `MAX_FEE_BPS = 100` right, and is a taker-paid fee the intent?
+1. Version drift: none; I2 keeps the hash comparison.
+2. I9: the maker is 7tVP…; metalbook's window listed the series and funded the taker.
+3. I3: plain keys on devnet; Squads is rehearsed before mainnet, not in this phase.
+4. Fees: `MAX_FEE_BPS = 100`, taker-paid, devnet default 0, immutable per series.
