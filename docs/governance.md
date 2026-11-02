@@ -24,8 +24,11 @@ delegate approvals; takers sign only their own transfers.
   - pausing stops fills on a series, and is reversible;
   - creating a series cannot affect existing ones;
   - the admin has no instruction to change a series' terms, nor (after I10) its fee.
-- **Neither** can sign for a maker: the maker's signature is checked by the ed25519
-  precompile, and the program reads the quote from the signed bytes.
+- **The admin cannot sign for a maker.** In the current code (`settle`, PLAN 4.1) the
+  maker's signature is checked by the ed25519 precompile, and the program reads the quote from
+  the signed bytes. The upgrade authority is different: new code could remove or replace those
+  checks. That is part of "anything" above, and the reason upgrades go through the reviewed,
+  verifiable procedure below.
 
 ## Mainnet day ordering (plan only)
 
@@ -66,8 +69,22 @@ their `--help` on 2026-11-02.
 6. Record the commit, both hashes, the signature and the slot in `docs/devnet.md` (or the
    mainnet record). Then run a smoke fill.
 
-An upgrade keeps the program id and every account, so outstanding quotes stay valid across
-it. An upgrade that changes a layout needs its own migration plan, and none is planned.
+An upgrade keeps the program id and every account's bytes. Outstanding quotes stay valid only
+across a **compatible** upgrade, one that preserves the v1 quote contract:
+- the `quotebook-v1` domain and the 208-byte encoding;
+- the precompile binding;
+- `settle`'s checks and amounts;
+- the account layouts.
+
+A breaking upgrade, one that changes any of these, needs an explicit plan in its PR, before the
+upgrade:
+- either a compatibility path (new code still accepts v1 quotes and layouts);
+- or a migration plus a quote drain: pause the series, let every outstanding quote expire
+  (`max_quote_ttl + MAX_CLOCK_SKEW`, 70 s at 60 s), or have makers `cancel_all`; upgrade; then
+  resume.
+
+None is planned. I10's fee field reuses reserved bytes that read zero, which keeps it
+compatible.
 
 ## Emergencies
 
