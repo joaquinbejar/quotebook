@@ -266,6 +266,47 @@ fn test_sdk_end_to_end() {
         "{err}"
     );
 
+    // Incident step: the maker revokes the delegate on the account it pays from. A fresh,
+    // validly signed quote then cannot settle: the token program refuses the delegate PDA.
+    vm.send(
+        &[ix::revoke_delegate(
+            &token_program(),
+            &maker_quote,
+            &maker.pubkey(),
+        )],
+        &[&maker],
+    )
+    .unwrap();
+    let mq = vm.account(&maker_quote);
+    assert_eq!(
+        u32::from_le_bytes(mq.data[72..76].try_into().unwrap()),
+        0,
+        "delegate unset"
+    );
+    let fresh = Quote::new(QuoteTerms {
+        nonce: Nonce::new(3),
+        ..*quote.terms()
+    })
+    .unwrap();
+    let fresh_sig: [u8; 64] = maker
+        .sign_message(&quotebook_sdk::quote_message(&fresh))
+        .as_ref()
+        .try_into()
+        .unwrap();
+    let fresh_pair = quotebook_sdk::settle_instructions(
+        &PROGRAM_ID,
+        &fresh,
+        &fresh_sig,
+        &accounts,
+        BaseLots::new(1),
+        0,
+    );
+    let before = (vm.amount(&maker_quote), vm.amount(&taker_quote));
+    let err = vm.send(&fresh_pair, &[&taker]).unwrap_err();
+    // SPL Token `OwnerMismatch` (4): the PDA is no longer the account's delegate.
+    assert!(err.contains("InstructionError(1, Custom(4))"), "{err}");
+    assert_eq!((vm.amount(&maker_quote), vm.amount(&taker_quote)), before);
+
     // The maker cancels nonce 2 before anyone fills it; a quote with it then fails.
     vm.send(
         &[ix::cancel_nonce(

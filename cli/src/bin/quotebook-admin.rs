@@ -9,6 +9,7 @@
 //!   set-admin     --admin <KEYPAIR> --new-admin <ADDRESS>
 //!   init-maker    --maker <KEYPAIR>
 //!   approve       --maker <KEYPAIR> --account <TOKEN_ACCOUNT> --amount <ATOMS>
+//!   revoke        --maker <KEYPAIR> --account <TOKEN_ACCOUNT>   (removes the delegate)
 //!   cancel-all    --maker <KEYPAIR> --new-min <NONCE>
 //!   cancel-nonce  --maker <KEYPAIR> --nonce <NONCE>
 //!   show          (the config)
@@ -119,6 +120,10 @@ fn run() -> Result<(), CliError> {
                 &address(&args, "account")?,
                 args.parse_req("amount")?,
             )?
+        }
+        "revoke" => {
+            let maker = keys::load(args.req("maker")?)?;
+            admin::revoke(&mut rpc, &maker, &payer, &address(&args, "account")?)?
         }
         "cancel-all" => {
             let maker = keys::load(args.req("maker")?)?;
