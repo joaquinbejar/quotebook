@@ -43,6 +43,30 @@ parser (`sigverify`) are reused unchanged; only the domain and the layout behind
 - **Ratio:** a fill of `k` units moves `k × lots_per_unit` base lots on every leg. Integer
   multiples avoid any rounding between legs.
 
+## Canonical validation
+
+A matching hash only proves that the args are the legs the maker signed; it does not prove
+the maker signed a valid package. The decoder enforces every rule below before the hash is
+computed, with the same code on chain, in `client::verify` and in the SDK encoder (which
+refuses to build a package that breaks one).
+
+| Rule | Error |
+| --- | --- |
+| args are exactly `10 + 17 · leg_count` bytes | `InvalidInstructionData` |
+| `1 ≤ leg_count ≤ MAX_LEGS` (8, see Limits) | `MalformedQuote` |
+| the account list is exactly the shared prefix plus each leg's accounts, fee account included when that series has `fee_bps > 0` | `NotEnoughAccountKeys` / `InvalidInstructionData` |
+| header domain is `quotebook-v2` | `WrongDomain` |
+| header reserved bytes are zero | `MalformedQuote` |
+| header `units > 0` | `MalformedQuote` |
+| every leg: `side` is 0 (bid) or 1 (ask), `price > 0`, `lots_per_unit > 0` | `MalformedQuote` |
+| series addresses strictly increasing, by bytes: no duplicate, no other order | `MalformedQuote` |
+| `1 ≤ fill_units ≤ units` | `FillSizeInvalid` |
+| `fill_units × lots_per_unit` and each leg's quote amount fit in `u64` | `Overflow` |
+| `sha256` of the legs equals `package_hash` | new `PackageMismatch` |
+
+These are the v1 decoder's rules (`Quote::decode`: side 0 or 1, zero padding, nonzero price
+and size) extended to the leg list.
+
 ## `settle_package`
 
 Instruction `[ed25519 precompile, settle_package]`, like v1.
@@ -56,8 +80,8 @@ Instruction `[ed25519 precompile, settle_package]`, like v1.
   `fee_bps > 0`.
 - **Checks, in order:**
   1. the precompile instruction verifies as today, with the v2 domain;
-  2. `sha256` of the legs (from the args and the series accounts) equals `package_hash`;
-     `sol_sha256` is a syscall, so this adds no dependency;
+  2. the canonical rules above, then `sha256` of the legs (from the args and the series
+     accounts) equals `package_hash`; `sol_sha256` is a syscall, so this adds no dependency;
   3. header binding: program, deployment, taker (or open), clock window, `expires_at −
      issued_at` at most the smallest `max_quote_ttl` among the legs' series;
   4. `1 ≤ fill_units ≤ units`;
@@ -80,19 +104,49 @@ offsets, the 64-byte signature, the 32-byte key and the 208-byte message): 324 b
 
 | Case | Bytes | Fits in 1,232? |
 | --- | ---: | --- |
-| v1 `settle`, one quote (today) | 900 | yes |
+| v1 `settle`, one quote (today, measured) | 900 | yes |
 | v2, distinct quote mints per leg: `669 + 248·N` | N=2: 1,165; N=3: 1,413 | 2 legs |
-| v2, one shared quote mint (USDC legs): `768 + 149·N` | N=3: 1,215; N=4: 1,364 | 3 legs |
-| v2 with an address lookup table, all but the signer and the two programs looked up: about `581 + 31·N` | N=8: 829 | size is not the limit |
+| v2, one shared quote mint (USDC legs): `765 + 152·N` | N=3: 1,221; N=4: 1,373 | 3 legs |
+| v2 with an address lookup table, all but the signer and the two programs looked up: about `581 + 31·N` | N=8: about 829 | size is not the limit |
 
-- **Accounts:** a package with distinct mints locks `7 + 7·N` accounts. The per-transaction
-  account-lock limit (64 at the time of writing; to recheck when this turns into code) caps it
-  at 8 legs; a shared quote mint allows 13.
-- **Compute:** measured v1 `settle` costs (docs/benchmarks.md) bound a leg: 9.2k CU on SPL
-  Token without a fee, 12.2k with a 100 bps fee, 18.8k for the Token-2022 worst case. Part of
-  that is per transaction (sysvar read, signature parse, nonce update), so a package costs
-  less than `N ×` those. Upper bounds: 8 legs at 12.2k is 98k CU, at 18.8k is 150k CU, below
-  the 200k default per instruction; `sol_sha256` on 1 + 49·8 bytes adds a few hundred CU.
+The v2 rows are derived from the account schema above, not yet measured:
+
+- **Layout:** every leg keeps its 7 account indices, in the order of the schema, even when it
+  repeats an account of another leg; there is no shared quote prefix. An index is 1 byte; a
+  new transaction key is 32.
+- **Fixed part, 669 bytes:** 1 + 64 for the signature, 3 for the message header, 1 for the key
+  count, 7 shared keys (taker, maker state, delegate PDA, instructions sysvar, token program,
+  quotebook, ed25519 program) at 224, 32 for the blockhash, 1 for the instruction count, 324
+  for the precompile instruction, then for `settle_package` 1 program index, 1 account count,
+  5 shared indices, 1 data length, 1 tag and 10 bytes of fixed args.
+- **Distinct mints, 248 per leg:** 7 new keys (224), 7 indices and 17 bytes of args.
+- **Shared quote mint:** the first leg costs 248; each later leg adds only series, base mint,
+  maker base and taker base as new keys (128) plus 7 indices and 17 bytes of args: 152. So
+  `669 + 248 + 152·(N − 1) = 765 + 152·N`.
+- **Compact lengths:** every compact-u16 above is 1 byte while its value is below 128; the
+  data length (`11 + 17·N`) passes that at N=7, which only the lookup-table row reaches.
+
+Each table row becomes a test with the code: the real SDK serializer builds the boundary
+packages (2 legs distinct and 3 shared must fit; 3 distinct and 4 shared must not) and the
+test asserts the exact sizes, so a schema change that moves a boundary fails the build.
+
+- **Accounts:** a package with distinct mints references `7 + 7·N` accounts; with a shared
+  quote mint, `10 + 4·N` (the quote mint, maker quote and taker quote counted once). The
+  per-transaction account-lock limit (64 at the time of writing; to recheck when this turns
+  into code) caps them at 8 and 13 legs. `MAX_LEGS` is 8 so that every valid package fits the
+  limit whatever its mints; the compute row below may lower it.
+- **Compute (projection, not a bound):** measured v1 `settle` costs (docs/benchmarks.md) are
+  9.2k CU on SPL Token without a fee, 12.2k with a 100 bps fee and 18.8k for the Token-2022
+  worst case. `N ×` those is only a projection: 8 legs would be about 98k and 150k CU.
+  `settle_package` adds work v1 does not do (the canonical checks, `sol_sha256` on
+  `1 + 49·N` bytes, the leg loop, per-leg account and extension checks, repeated accounts
+  across legs), and saves some it shares (one signature parse, one nonce update), so the
+  projection proves nothing.
+- **Measurement gate:** the code PR adds `make bench` rows for `settle_package` at 2 legs and
+  at `MAX_LEGS`, on SPL Token and on the Token-2022 worst case, with a fee on every leg. It
+  does not merge until those rows are in docs/benchmarks.md; if the `MAX_LEGS` row exceeds
+  the 200k default per instruction, `MAX_LEGS` drops to the largest measured count below it,
+  and the SDK sets a compute-unit limit from the measured rows.
 - **Rent and state:** none new. A package uses one nonce of the maker's existing window.
 
 ## Nonce window
@@ -121,6 +175,11 @@ maker would need two cancel paths for one intent ("cancel everything").
 ## Tests to write with the code
 
 - The hash: Rust and TS vectors, and a mutation of every leg field and the leg order.
+- Canonical validation: one rejection per rule of the table, each from a valid package with
+  one change: leg count 0 and `MAX_LEGS + 1`, a trailing or missing args byte, side 2, a zero
+  price, zero lots, zero units, a nonzero reserved byte, two equal series and two descending
+  series, `fill_units` 0 and `units + 1`, and an overflowing product. Each one is rejected
+  before the hash, with the error of the table, on chain and in `client::verify`.
 - Cherry-picking: v1 `settle` with a v2 header fails `WrongDomain`; `settle_package` with a
   leg removed, added, reordered or changed fails the hash check.
 - Ratio and atomicity: exact balances for `k` units on every leg; a failing second or last
@@ -128,8 +187,8 @@ maker would need two cancel paths for one intent ("cancel everything").
   unchanged.
 - The shared window: a v1 nonce cannot fill a package and the reverse; `cancel_all` covers
   both.
-- Limits: the largest package that fits, with and without a lookup table, and its CU row in
-  `make bench`.
+- Limits: the serialized boundary packages of the size table, with and without a lookup
+  table, and the measured CU rows of the gate above.
 - Fuzzing: the header decoder and the leg args join the I6 targets.
 
 ## Open questions
