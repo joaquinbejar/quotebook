@@ -277,5 +277,7 @@ the maker).
 - The maker service was stopped by PID after the fill, and the delegate approval on
   `FMKD…Fb13` was revoked (`spl-token display` shows `Delegation: (not set)`), so no further
   fill can move the maker's long tokens.
-- The taker's long token is a live metalbook position: metalbook's keeper settles the series
-  at expiry, and the token is redeemed there.
+- Observed in the demo: the fill only. Expected afterwards, not observed here: the taker's
+  long token is a live metalbook position. After expiry (2026-11-13 21:00Z) metalbook's
+  keeper is expected to settle the series, and the token can then be redeemed through
+  metalbook. That lifecycle is metalbook's and is recorded in its devnet log, not here.
