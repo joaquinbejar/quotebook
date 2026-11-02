@@ -5,6 +5,8 @@
 //! - [`settle_instructions`]: the ed25519 precompile instruction and the `settle` instruction
 //!   for a maker-signed [`Quote`].
 //! - [`decode`]: program accounts from RPC account data.
+//! - [`events`]: fill events from a transaction's logs, only those a successful quotebook
+//!   frame of a successful transaction emitted.
 //!
 //! The quote encoding, account layouts and error codes come from [`quotebook_core`],
 //! re-exported as [`core`].
@@ -12,6 +14,7 @@
 pub use quotebook_core as core;
 
 pub mod decode;
+pub mod events;
 pub mod ix;
 pub mod pda;
 

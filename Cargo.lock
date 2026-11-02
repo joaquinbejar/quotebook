@@ -2918,6 +2918,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "quotebook-probe"
+version = "0.1.1"
+dependencies = [
+ "pinocchio",
+]
+
+[[package]]
 name = "quotebook-program"
 version = "0.1.1"
 dependencies = [
@@ -2927,6 +2934,7 @@ dependencies = [
  "pinocchio-system",
  "pinocchio-token",
  "quotebook-core",
+ "quotebook-sdk",
  "solana-account",
  "solana-address 2.7.0",
  "solana-clock 3.2.1",

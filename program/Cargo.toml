@@ -28,6 +28,7 @@ solana-address = { workspace = true, features = ["decode", "curve25519"] }
 
 [dev-dependencies]
 litesvm = { workspace = true, features = ["precompiles"] }
+quotebook-sdk = { workspace = true }
 solana-account = { workspace = true }
 solana-clock = { workspace = true }
 solana-instruction = { workspace = true }

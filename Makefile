@@ -50,6 +50,16 @@ program-control:
 		echo "program-control: make program succeeded with a failing cargo-build-sbf"; exit 1; fi
 	@echo "program-control: a frame overflow and a failing cargo-build-sbf both fail make program"
 
+# The test-only probe program (test-programs/probe; I7 event tests: a spoofing emitter and
+# settle by CPI), built for SBF next to the program. Never deployed.
+.PHONY: test-programs
+test-programs:
+	@mkdir -p target
+	@cargo build-sbf --manifest-path test-programs/probe/Cargo.toml --arch $(SBF_ARCH) -- $(CARGO_FLAGS) \
+		> target/build-sbf-probe.log 2>&1; status=$$?; cat target/build-sbf-probe.log; \
+		if [ $$status -ne 0 ]; then echo "test-programs: cargo-build-sbf failed ($$status)"; exit $$status; fi
+	@sh scripts/check-sbf-log.sh target/build-sbf-probe.log
+
 # Measure every instruction's CU in LiteSVM and regenerate docs/benchmarks.md
 .PHONY: bench
 bench: program
@@ -77,7 +87,7 @@ verifiable-check: verifiable
 # Run every test, including the LiteSVM program tests (which load target/deploy, so `make
 # program` runs first). QUOTEBOOK_PROPTEST_CASES=<n> overrides the property-test case count.
 .PHONY: test
-test: program
+test: program test-programs
 	cargo test $(CARGO_FLAGS) --workspace --all-features
 
 # Format the code

@@ -15,6 +15,9 @@
 //! 11. `[]` quote mint's token program
 //! 12. `[]` instructions sysvar
 //!
+//! On success it logs one fill event (`quotebook_core::event::FillEvent`, 168 bytes) with
+//! `sol_log_data`, after both transfers.
+//!
 //! Args: `sig_ix_index: u8`, `fill_size: u64` (base lots). The quote is not in the arguments:
 //! it is read from the ed25519 precompile instruction at `sig_ix_index`, which must come
 //! before this one. The plan's `maker` account is not needed: everything is checked against
@@ -28,6 +31,7 @@ use pinocchio::sysvars::instructions::{Instructions, INSTRUCTIONS_ID};
 use pinocchio::sysvars::Sysvar;
 use pinocchio::{Address, ProgramResult};
 use pinocchio_token::instructions::TransferChecked;
+use quotebook_core::event::FillEvent;
 use quotebook_core::instruction::SettleArgs;
 use quotebook_core::{sigverify, BaseLots, Quote, QuotebookError, Side, UnixTimestamp};
 
@@ -280,7 +284,7 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
                 quote_atoms,
                 quote_decimals,
                 Some(&seeds),
-            )
+            )?;
         }
         Side::Ask => {
             transfer(
@@ -302,7 +306,25 @@ pub fn process(program_id: &Address, accounts: &mut [AccountView], args: &[u8]) 
                 quote_atoms,
                 quote_decimals,
                 None,
-            )
+            )?;
         }
     }
+
+    // The fill event, only after both transfers succeeded (I7). An indexer still has to check
+    // that the transaction succeeded: a later instruction can roll this one back.
+    let event = FillEvent {
+        series: series_address,
+        maker: terms.maker,
+        taker: *taker.address(),
+        nonce: terms.nonce,
+        side: terms.side,
+        price: terms.price,
+        fill_size: args.fill_size,
+        base_atoms,
+        quote_atoms,
+        fee: 0,
+        unix_timestamp: now,
+    };
+    crate::log::data(&event.encode());
+    Ok(())
 }
