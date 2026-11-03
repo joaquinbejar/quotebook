@@ -64,10 +64,21 @@ their `--help` on 2026-11-02.
 3. Check the buffer: `solana-verify get-buffer-hash <BUFFER>` must equal
    `program-executable-hash`.
 4. `solana program set-buffer-authority <BUFFER> --new-buffer-authority <UPGRADE AUTHORITY>`.
+   If the new binary is larger than `ProgramData` (`solana program show <PROGRAM>`, "Data
+   Length"), extend it first: `solana program extend <PROGRAM> <ADDITIONAL_BYTES> --payer
+   <PAYER>`, signed by the payer alone, and wait for the extension to land. **Do not count on
+   `upgrade` to extend it:** on `solana-test-validator` CLI 4.4.0's `upgrade` extended
+   `ProgramData` by itself, but on devnet (2026-11-03, I10) it failed in simulation with
+   "account data too small for instruction" and needed the separate `extend`
+   (`verifiable-build.md`). On devnet `extend` needed no authority signature; before mainnet,
+   check whether the cluster requires the upgrade authority for it, in which case the
+   extension also goes through Squads.
 5. The upgrade authority executes `solana program upgrade <BUFFER> <PROGRAM>`; on mainnet this
    is a Squads proposal, approved by the threshold.
-6. Record the commit, both hashes, the signature and the slot in `docs/devnet.md` (or the
-   mainnet record). Then run a smoke fill.
+6. Wait for finalization, then read `solana-verify get-program-hash <PROGRAM>` and the
+   SHA-256 of `solana program dump`: a read right after the upgrade can still return the old
+   program. Record the commit, both hashes, the signature and the slot in `docs/devnet.md`
+   (or the mainnet record). Then run a smoke fill.
 
 An upgrade keeps the program id and every account's bytes. Outstanding quotes stay valid only
 across a **compatible** upgrade, one that preserves the v1 quote contract:

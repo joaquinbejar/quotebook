@@ -136,14 +136,15 @@ Deployed on 2026-10-30 from the Mac Studio with Agave `solana-cli` 4.4.0 and
 | --- | --- |
 | Program id | `3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo` |
 | Loader | `BPFLoaderUpgradeab1e11111111111111111111111` |
-| `ProgramData` | `FvGuwVkTTgTuz1aBfxkxgTfnrrazktc4oXDmyohymqfN` (35,032 bytes, slot 516765399) |
+| `ProgramData` | `FvGuwVkTTgTuz1aBfxkxgTfnrrazktc4oXDmyohymqfN` (35,032 bytes, slot 516765399; 52,472 bytes since the I10 upgrade) |
 | Upgrade authority, admin and payer | `77ieYLKspRnGzAt1AK6ZVsttnTY6T7EY2k7CpTZeCPPV` until 2026-11-02 |
 | Upgrade authority since 2026-11-02 (I3) | `248gnwHHesqhQURgrkfpqfj48NK1oN1fh5qcUnTRssfy` (`~/.config/solana/quotebook-devnet/upgrade-authority.json`) |
 | Config admin since 2026-11-02 (I3) | `GZhm3AUm4YxjiK9uurq8R5TDYGMekuik81y9JPiotVnL` (`~/.config/solana/quotebook-devnet/admin.json`) |
 | Payer | `77ie…CPPV`, no authority. See [`governance.md`](governance.md) |
 | Deployed commit | `898c173d1916404f8579514a4b034aeff129440b` (first deployment, macOS build) |
 | `.so` SHA-256 | `d7c2f1de7114751cb05849a981924956bb0e632ae5f849cc9fd62caa7fc721e7` (first deployment) |
-| Current binary | the reproducible build of `92cdd22` (same program code), SHA-256 `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776`, upgraded 2026-11-02 in slot 517802812, signature `2NDo6wEyNUeVGcxxJ7igHEGpoVmK4HXunov8QjJ8Mu9XvwuED3zG7Xj622JpxydQUwcqWXdahR8TyWjtUrXx2VJg`. How to check it: [`verifiable-build.md`](verifiable-build.md) |
+| Current binary | I10, the reproducible build of `3d0ec13`, SHA-256 `4748d02454e5045ec06f8dec1ea2e5575ce28c7f4ab56b64dda46c1a9626c87a`, executable hash `a5287763e1c93463d7f52b5850129ee5be870328e489d513c47d693182d47f4d`, upgraded 2026-11-03 in slot 518208830, signature `5y8scCjTzJNiPQ8SK77gUQZgXXnpDYQqwQ9DeY5mxQPst89VKYPpyR5UtXEbGG6Au4c8u5JwFukuAcnN7s2SFnuC` ([below](#i10-upgrade-and-smoke-tests-2026-11-03)). How to check it: [`verifiable-build.md`](verifiable-build.md) |
+| Previous binary | the reproducible build of `92cdd22`, SHA-256 `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776`, from 2026-11-02 (slot 517802812, signature `2NDo6wEyNUeVGcxxJ7igHEGpoVmK4HXunov8QjJ8Mu9XvwuED3zG7Xj622JpxydQUwcqWXdahR8TyWjtUrXx2VJg`) to the I10 upgrade |
 | `Config` | `D7Y4JfDJNMuwJwMEZP848s8x8MhoTRyZLArEmnum3n71` |
 | Deployment id | `ce59db5080fc2c6d3bcf7ca90712d3c2`: the first 16 bytes of devnet's genesis hash `EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG` |
 
@@ -288,3 +289,64 @@ the maker).
   long token is a live metalbook position. After expiry (2026-11-13 21:00Z) metalbook's
   keeper is expected to settle the series, and the token can then be redeemed through
   metalbook. That lifecycle is metalbook's and is recorded in its devnet log, not here.
+
+## I10 upgrade and smoke tests (2026-11-03)
+
+The program was upgraded to I10 (series fees, ADR 0001; maker registry, ADR 0002) from
+`3d0ec13`, the merge of #34, with no migration: series 0 and 1 keep `fee_bps` 0 in bytes that
+were zero. Upgrade record: [`verifiable-build.md`](verifiable-build.md). The smoke tests used
+`quotebook-admin`, `quotebook-maker` and `quotebook-taker` built from `3d0ec13`, the payer
+`77ie…CPPV` paying, the admin `GZhm…tVnL` signing the series and the withdrawal, and the
+series 0 maker and taker above.
+
+### Accounts
+
+| Item | Value |
+| --- | --- |
+| Series 2 (QBB/QBQ, 10 bps fee) | `8HJpxdrb9tNgW9BVYtytPNPfBGhQsauxwLwoqfwttu9Z`: the lot sizes, TTL and minimum size of series 0, `fee_bps` 10 |
+| QBQ fee account (the Config PDA's ATA) | `HhHwyMfVNtfAnQHFRdK15dKVCdpeVULpR6STSMrUpczq` |
+| Payer QBQ account (withdrawal destination) | `46QUHZBWkCGpgx1qQ6WeLHgmx3dD9LNmiz2EYcgGwb3t` |
+| Maker profile PDA `["profile", 5btd…mWW5]` | `4C4HxZx6ESBNXJyCWzj4dZCKeec18XCaBDHw5DXrWZak` (closed at the end) |
+
+### Transactions
+
+| Step | Slot | CU | Signature |
+| --- | --- | --- | --- |
+| `settle`, series 0: taker buys 1 lot at 2,517 ticks (v1, 13 accounts) | 518209966 | 9,207 | `2fT3waw2dAGqGp1ctMR7tELkFXFtgr4BAyUYjxSwiBrjUBoAaCGAUNeu7yKce3ihkL5g1eGADiuF4MHZJPhthdix` |
+| `create_series` (series 2, `--fee-bps 10`) | 518209568 | 9,413 | `EMBpCEkAMtyzQt2ESdG4LJF8JJLy4aJjWLNzatXmDxHmCci5mx5McFqLpVPxTr3bNy9PfL61aJHXEATANR2zYTD` |
+| `create-fee-account --quote QBQ` | 518209574 | 15,018 | `2tbREi9nqikHWouDeUVbzcC4p7phQcyVDvmHnC9tjGAG5kCvYSM1LuXw4GEXtsERTZHSkgAnR48qx32MSzmWSoRc` |
+| `settle`, series 2: taker buys 1 lot at 2,517 ticks with the fee | 518210459 | 15,199 | `5bnjMecD2bGgBW6UDLjc3gUeTz8y7B8AxcWKL6qKgmRBte7BzZqyFQm2chwHhzjHYp3EHmzYH3yQbANR1KQBeB2Y` |
+| Payer QBQ account | 518210759 | | `4CyaYFzhqMND2CjqVQU3prmpgW7Hf6rTM8HRoGt8MKMFRYs76V1gHvowgFzrJNemuHKZBBPbGLRq9DBVZFAwpVw9` |
+| `withdraw_fees`, 25,170 atoms | 518210787 | 3,125 | `61F6CiPfRHDjdBpr6hsRzVxxndHniTmRkMu8vJRe6Wxgam12fg9M7FxvnWidQtvgtbG1UWz9kLmYiXxh4cwEjNju` |
+| `set_profile` (create) | 518210898 | 10,875 | `4rKLyBZ3eGiWDWEDsfCXjDoqHRqqwprMk3MToPqjhZTytt16ckfH9d3YvgLjCaVca2gAMCP5zAbCeGy885D8abCr` |
+| `close_profile` | 518210995 | 1,700 | `4DkSRrXXQz4kmeCMhCBEbFdiwy22rTPJ2m9gZtJFWtbHsiyU3faRe1qymTPXtYcqndSyXgFcjryeUGYUCVpaKcwR` |
+
+### Checks
+
+- `show-series` on series 0 printed `fee_bps 0` after the upgrade, and on series 2 `fee_bps 10`.
+- v1 fill on series 0 (maker ask, nonce 3): the maker went from 997 to 996 QBB and from
+  100,076.95 to 100,102.12 QBQ; the taker from 103 to 104 QBB and from 9,923.05 to 9,897.88
+  QBQ. That is `1 × 1,000,000` base atoms and `2,517 × 1 × 10,000 = 25,170,000` quote atoms.
+  9,207 CU against 9,204 to 9,206 in LiteSVM (`benchmarks.md`).
+- Fee fill on series 2 (maker ask, nonce 4): the fee is `floor(25,170,000 × 10 / 10,000) =
+  25,170` atoms, taker-paid. The taker paid 25.19517 QBQ (9,897.88 to 9,872.68483), the
+  maker received 25.17 (to 100,127.29), and the fee account went from 0 to 0.02517 QBQ. The
+  `qb-fill1` event decoded to fill 1, price 2,517, base 1,000,000 atoms, quote 25,170,000
+  atoms and `fee` 25,170.
+- That fill used 15,199 CU against 12,207 in LiteSVM (100 bps, SPL, maker ask). The
+  difference, 2,992 CU, is the bump search of the Config PDA, which `settle` derives with
+  `find_program_address` on the fee path: on devnet its bump is 253 (three attempts at about
+  1,500 CU each), while the LiteSVM program id gives 255 (one attempt). Every fee fill on this
+  deployment pays it; storing or passing the bump would remove it (follow-up, not a fault).
+- `withdraw-fees` of 25,170 atoms left the fee account at 0 and the payer's QBQ account at
+  0.02517. 3,125 CU, the LiteSVM figure.
+- `set-profile` with a placeholder endpoint (`wss://maker.invalid:9000`, name `quotebook
+  devnet smoke`) created a 208-byte account owned by the program holding 0.00170688 SOL;
+  `quotebook-taker discover` listed `1 listed, 0 invalid, 0 not allowed` with that endpoint
+  and name. A live `--discover` fill needs a reachable endpoint and is covered by LiteSVM and
+  the CLI end-to-end test. `close-profile` removed the account, `discover` then listed 0, and
+  the rent went back to the payer: its balance moved only by the 20,000 lamports of the two
+  transaction fees.
+- Both maker services (series 0 on `127.0.0.1:9000`, series 2 on `127.0.0.1:9001`) refused
+  requests with `RateLimited` during their cold start, quoted after it, and were stopped by
+  PID after their fill.

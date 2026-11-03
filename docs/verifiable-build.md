@@ -96,7 +96,8 @@ one-line change. Its output must match the hash above before the switch.
 | `92cdd22` (main) | CI `verifiable` job on a GitHub runner, native amd64 (run 41416573833) | `a6a324f0a3c624bd20706ec489e99a9c5b98fdba6627258c0d9c7b186f310776` | the same bytes on a second machine |
 | `e65b159` (I7, fill event) | `scripts/verifiable/build.sh` on the Studio | `e03755a76238fee9decab465a108a8ef3bf8790323a2d5596a88b2179ea3d072` | executable hash `0744c011377a3a330862d4b38885f994883874a7536d15b6f3488fc1a57197ca`. Not deployed: devnet keeps `a6a324f0…` until the I10 upgrade |
 | `99707f1` (I10, fees and registry) | `scripts/verifiable/build.sh` on the Studio | `650d393fc0a1b9b0c6b93375a03f85245d450961abedd0f5d71b371910a73039` | executable hash `669eb65a8e61dd47f2efed1e4d1297ef80c54772b05d1575351dd748a0ec7085`. Superseded by the next row before the merge; never deployed |
-| `8fb4ffb` (I10, only an Ask forms `quote_atoms + fee`, Codex I10-02) | `scripts/verifiable/build.sh` on the Studio | `4748d02454e5045ec06f8dec1ea2e5575ce28c7f4ab56b64dda46c1a9626c87a` | executable hash `a5287763e1c93463d7f52b5850129ee5be870328e489d513c47d693182d47f4d`. The devnet upgrade follows the merge |
+| `8fb4ffb` (I10, only an Ask forms `quote_atoms + fee`, Codex I10-02) | `scripts/verifiable/build.sh` on the Studio | `4748d02454e5045ec06f8dec1ea2e5575ce28c7f4ab56b64dda46c1a9626c87a` | executable hash `a5287763e1c93463d7f52b5850129ee5be870328e489d513c47d693182d47f4d`. Deployed on devnet 2026-11-03 (below) |
+| `3d0ec13` (main, merge of #34) | `scripts/verifiable/build.sh`, twice, on the Studio | `4748d02454e5045ec06f8dec1ea2e5575ce28c7f4ab56b64dda46c1a9626c87a` | byte-identical to `8fb4ffb` (no program change in between), 52,472 bytes. A third run hung under qemu with no CPU use for 20 h and truncated the artifact to 0 bytes; it was stopped and the build rerun before the upload |
 
 ## Devnet upgrade to the reproducible binary (2026-11-02)
 
@@ -117,3 +118,22 @@ Smoke test after the upgrade: a `settle` on series 0 (`6XjcD…pGh7`) filled 1 l
 from maker `5btd…mWW5` to taker `3ZBj…sqLs`, using 8,595 CU, the same as on the macOS build:
 `a9NdJwwzp3X4MnxDbYydsv2bnD6q9GLSDXKXfTrcMb4R5mKuT6XEpmB7mpGTUaVKjiETyRcwXhQJfvMX89cGgho`.
 The maker service was stopped by PID afterwards.
+
+## Devnet upgrade to I10 (2026-11-03)
+
+| Item | Value |
+| --- | --- |
+| Binary | `target/verifiable/quotebook_program.so` from `3d0ec13`, 52,472 bytes, SHA-256 `4748d024…c87a` |
+| Buffer | `8d1KjAmCZVuC3hvTRxrumBssenrX9KvgLgrBtEvZWgxx`, written by the payer `77ie…CPPV`; `get-buffer-hash` `a5287763…f4d` before the upgrade; authority set to `248g…ssfy` in `3DwHvfCPLxEbjeaRzd2eEZ3BPisuKTMqQ6GwSfbF3i4Av8qPZjibSpMLPcrAN6Cwb9fotrcc7m3LAY3HYPnSvhnw` |
+| `solana program extend` by 17,440 bytes (payer only) | `5aFuM7FGK1rMhJtGsKhu8GNGCg75BdCmFM9HTHj38Dy99yxvLBXsB5Xtmx3Aa1egaiuTjDfPMiCKhR1LG4vSN7Xn`, slot 518208709 |
+| `solana program upgrade` (authority `248g…ssfy`, fee payer `77ie…CPPV`) | `5y8scCjTzJNiPQ8SK77gUQZgXXnpDYQqwQ9DeY5mxQPst89VKYPpyR5UtXEbGG6Au4c8u5JwFukuAcnN7s2SFnuC` |
+| Last deployed in slot | 518208830 |
+| `solana-verify get-program-hash` after (finalized) | `a5287763e1c93463d7f52b5850129ee5be870328e489d513c47d693182d47f4d` |
+| `solana program dump` SHA-256 after | `4748d02454e5045ec06f8dec1ea2e5575ce28c7f4ab56b64dda46c1a9626c87a`, 52,472 bytes |
+
+The upgrade closed the buffer. Unlike the local rehearsal (CLI 4.4.0 on
+`solana-test-validator`), `solana program upgrade` on devnet did not extend `ProgramData`
+itself: its simulation failed with "account data too small for instruction" and nothing was
+sent. A separate `solana program extend` signed by the payer alone succeeded, and the
+upgrade then went through; the 0-SOL authority only signed the upgrade. The smoke tests are
+in [`devnet.md`](devnet.md).
