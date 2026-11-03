@@ -129,6 +129,17 @@ The repository's own evidence for these:
 - **The registry certifies nothing** (ADR 0002): any maker can list itself, and its endpoint
   and name are untrusted text that clients must escape.
 
+## Known items, fixed after the audit
+
+Found after the freeze and left out of the audit commit on purpose: no program change before
+the audit.
+
+- **CU overhead of `find_program_address` on the fee path** (#39). On a fee series, `settle`
+  finds the Config PDA by bump search, about 1,500 CU per failed attempt. The devnet program's
+  Config bump is 253, so a fee fill costs 15,199 CU there against 12,207 in LiteSVM (bump 255).
+  This is cost only: the derived address is the same, and so is every check. Candidate fix:
+  verify against the stored Config bump (as `withdraw_fees` does) instead of searching.
+
 ## Questions for the auditors
 
 1. **No global pause.** Pausing everything takes one transaction per series
