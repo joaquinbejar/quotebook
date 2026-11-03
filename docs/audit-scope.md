@@ -153,8 +153,8 @@ The repository's own evidence for these:
 ## Freeze checklist
 
 - [x] I7 (#32) and I10 (#34) merged; main at `3d0ec13`.
-- [ ] The devnet upgrade to `3d0ec13` done: `get-program-hash` prints the executable hash above
-  and the smoke tests pass (`devnet.md`).
+- [x] The devnet upgrade to `3d0ec13` done (2026-11-03, slot 518208830): `get-program-hash`
+  prints the executable hash above and the smoke tests pass (`devnet.md`, #38).
 - [x] `wc -l` recounted (the table above, at `4e490ba`).
 - [x] `scripts/verifiable/build.sh` at the program's commit: both hashes above, equal to CI's
   `verifiable` job and to `make verifiable-check`.
