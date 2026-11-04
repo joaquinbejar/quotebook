@@ -1,6 +1,6 @@
 # quotebook: phase 2 plan (devnet operations)
 
-Status: **draft r3**, for Codex review. Brief from SOLANA-PROJECTS, msg 51619 (2026-11-03);
+Status: **draft r4**, for Codex review. Brief from SOLANA-PROJECTS, msg 51619 (2026-11-03);
 decisions from msg 51662 and metalbook's facts from msg 52647 are folded in (see "Decisions").
 One item is open: the spot source ("Open question"), because the public Hermes endpoint refuses
 keyless requests.
@@ -96,6 +96,10 @@ Scope (msg 51619):
   nor varswap's keeper is their writer: `write_authority` is the account itself. Sampled every
   15 s for 5 minutes on 2026-11-04, one update arrived 306 s after the last, the age peaked at
   295 s. **That is a single gap:** the cadence is not documented or guaranteed.
+- **These feeds have failed before:** metalbook stopped using sponsored push feeds because the
+  XAG account was stale when checked on 2026-10-29 (`metalbook/docs/devnet.md`, "Facts to rely
+  on"; whether it was this same account is not known). A 24-hour sample at one read a minute
+  is running, until 2026-11-05 about 09:20Z, and decides option A (see "Open question").
 - `pyth-lite` 0.1.0 (crates.io, no dependencies) decodes and checks that account: owner,
   discriminator, length, feed id, staleness.
 
@@ -419,9 +423,12 @@ Nov 15. Nothing depends on that date.
 The public Hermes endpoint answers 401 without a key, so decision 3 needs replacing. D2 is
 written for option A; the plan changes only in D2's spot lines and its dependency.
 
-- **A (proposed): the devnet push-feed accounts over RPC.** No key and no Hermes quota, and
+- **A (proposed, if the sample holds): the devnet push-feed accounts over RPC.** No key and no
+  Hermes quota, and
   `pyth-lite` already handles the format. The cost is a staler spot, about 5
   minutes in the one gap measured and with no guarantee of cadence. The watcher's `stale-spot`
-  alert reports it if the feeds stop.
+  alert reports it if the feeds stop. **Pass condition for the 24-hour sample,** during open
+  market hours: no gap above the 600 s stale limit in D2, on both feeds. The result is written
+  here with its numbers. If it fails, option A is dropped and B is the only option left.
 - **B: a separate Hermes key for the demo.** A fresher spot, but it needs Joaquin to obtain a key
   and adds a secret to the launchd job.
