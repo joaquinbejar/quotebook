@@ -1,6 +1,7 @@
 # quotebook: phase 2 plan (devnet operations)
 
-Status: **draft r1**, for Codex review. Brief from SOLANA-PROJECTS, msg 51619 (2026-11-03).
+Status: **draft r2**, for Codex review. Brief from SOLANA-PROJECTS, msg 51619 (2026-11-03);
+decisions from msg 51662 are folded in (see "Decisions").
 Baseline: `main` at `cf423b2`. The program is **frozen at `3d0ec13`** for the external audit
 (`docs/audit-scope.md`): no milestone here touches `program/` or `quotebook-core/`. Devnet runs
 that binary (`docs/devnet.md`, "I10 upgrade and smoke tests"). All work is off-chain and
@@ -52,14 +53,22 @@ Scope (msg 51619):
 - `metalbook-core` and `metalbook-sdk` 0.1.0 are on crates.io. Their dependencies are bytemuck,
   `solana-address` 2.7 and `solana-instruction`, the generation quotebook already uses.
 - Its devnet log lists "Trading through QuoteBook, once the maker has more USDC" as not done.
+- USDC on devnet (read 2026-11-04): metalbook's maker `7tVP…cACQ` holds 14.23; the I9 taker
+  `3ZBj…sqLs` holds 8.77.
+
+**Registry and the maker's transport**
+- A profile endpoint must start with `wss://`: `quotebook-core/src/profile.rs:19` enforces it
+  on chain, and `core` is frozen. `ws://127.0.0.1:9000` cannot be listed.
+- The maker service accepts plain WebSocket only (`accept_async`, `maker/src/server.rs:313`);
+  TLS exists only on the client side.
 
 **Pricing inputs**
 - **optfix 0.3.0** (crates.io, 2026-11-02) is `no_std` with Q64.64 fixed point.
   - `bsm::price_strip(expiry, &MarketInputs, &[StripLeg], &mut [Price])` prices many strikes
     of one expiry in one call. Each leg is bit-identical to a single `price`.
   - There is no vol surface: the caller passes one `Volatility`.
-- **Spot:** metalbook and varswap read Pyth Hermes over `ureq` 3.5 with a shared key. metalbook
-  is capped at 7 requests a minute.
+- **Spot:** metalbook and varswap read Pyth Hermes over `ureq` 3.5 with a shared key, whose
+  quota is theirs (metalbook 7 requests a minute, varswap 3). The demo does not use it.
 
 **varswap ops pattern** (origin/main `f5d5c7c`)
 - `scripts/{keeper,watch,window-roll}-agent.sh install|uninstall|status <name>` write plists
@@ -137,8 +146,11 @@ metalbook-specific parts so `maker/` stays generic.
     definition of `metalbook-maker::mark`;
   - the feed returns `None` (no quote) when spot is stale, the market is closed, or `now ≥
     expiry − settlement_window`.
-- **Spot:** a Hermes poller on XAU/USD and XAG/USD, one request per 15 s for both feeds
-  (4 a minute), cached, stale after 60 s.
+- **Spot:** a poller on the **public Hermes endpoint, with no key**, at most one request a
+  minute, with both XAU/USD and XAG/USD in that one request and exponential backoff on 429 or
+  5xx. The value is cached and stale after 180 s (three missed polls), so a quote can be priced
+  on a spot up to 3 minutes old. That is accepted for a demo with D5's limits, and is why
+  `max_size` stays at 1 lot. The poller never reads the shared key's environment variable.
 - **Vol:** one number per underlying from config (the I9 demo used 0.30 for XAG), recorded in
   `docs/devnet.md` with the date; carry 0, rate 4%. A vol source is out of scope (optfix has no
   surface).
@@ -163,13 +175,17 @@ metalbook-specific parts so `maker/` stays generic.
   `keeper-agent.sh`:
   - label `com.quotebook.demo-maker.<name>`;
   - `KeepAlive{SuccessfulExit: false}`, `ThrottleInterval` 120;
-  - the Hermes key through `zsh -c 'source ~/.zshrc; exec …'`;
+  - no secret in the environment: Hermes is keyless, and the keypairs are file paths;
   - logs under `~/.local/share/quotebook-demo/<name>/`;
   - the binary copied out of the checkout, so a later `git pull` does not change what runs.
 - **Restarts** pay the cold start (70 s at 60 s TTL). That is accepted and documented.
-- **Endpoint:** listens on `127.0.0.1` by default. A public `wss://` endpoint and a registry
-  profile (ADR 0002) need a tunnel or host decision (question 2). Without it, `set-profile`
-  is not done.
+- **Endpoint:** listens on `127.0.0.1` only; no tunnel and no public endpoint (msg 51662). The
+  taker runs on the same host with `--maker ws://127.0.0.1:9000`.
+- **Registry profile:** listing only. The program requires `wss://` and the service speaks plain
+  `ws://`, so the profile carries a documented `wss://localhost:9000` and the name `quotebook
+  demo (localhost, not reachable)`. `discover` lists it, but `--discover` cannot connect to it,
+  and the demo taker never uses that mode. Making it connectable needs TLS on the server, which
+  is out of scope here.
 - **Runbook:** `docs/runbooks.md` gets start, stop (by PID or `launchctl bootout`), key
   rotation, refilling, the kill switch and recovery from a crash loop.
 
@@ -181,6 +197,8 @@ the chain and the maker's local endpoint.
 - **Alert kinds:**
   - `balance` (payer SOL below `--min-balance`, default 0.3 SOL on devnet);
   - `inventory` (USDC or long tokens below a floor);
+  - `collateral` (the writer's USDC below one contract's `max_payout` when the next cycle is
+    due);
   - `allowance` (a delegate allowance below 20% of its approval);
   - `maker-down` (no answer to a probe request within 2 s; the probe asks for a quote and never
     settles it);
@@ -201,13 +219,48 @@ the chain and the maker's local endpoint.
 
 ### D5. Recurring quotebook × metalbook trade (M; needs metalbook)
 
-- **Coordination with metalbook:** settled with its window through SOLANA-PROJECTS before
-  D5 starts, and written into the PR.
-  - Which series: a listed expiry with an open market. Preferably a 1 oz series: a 50 oz XAG
-    capped call locks 250 USDC per contract.
-  - Who writes the contracts, and how the maker gets long tokens and USDC (question 1).
-- **Taker:** `quotebook-demo-taker` (in `demo/`), its own key
-  (`~/.config/solana/quotebook-demo/taker.json`). One run does this:
+- **Series:** metalbook lists **1 oz** XAG and XAU demo series and rolls them weekly as part of
+  its own phase 2, after Nov 6 (msg 51662). D5 cannot trade before they exist; `no-series` (D4)
+  reports it.
+- **The demo maker is the writer:** it locks its own devnet USDC in metalbook and sells the long
+  tokens through quotebook. This is the only milestone that writes metalbook state.
+- **What 14 USDC can write** (one contract, 1 oz; the cap is 10% above the strike):
+
+  | Series | Locks per contract | Writable with ~14 USDC |
+  | --- | --- | --- |
+  | XAG capped call, strike 50 | 5 USDC | yes, 2, leaving about 4 USDC to buy back |
+  | XAG put, strike 50 | 50 USDC | no |
+  | XAU capped call, strike 4,000 | 400 USDC | no |
+  | XAU put, strike 4,000 | 4,000 USDC | no |
+
+  So the demo **trades XAG capped calls only** and quotes nothing it cannot write. D2 still
+  prices XAU and puts, and tests cover them. Trading XAU needs at least 400 USDC per contract,
+  which is a funding request to SOLANA-PROJECTS, not a code change.
+- **Funding:** the USDC comes from `7tVP…cACQ`, which metalbook's window signs for. How much it
+  can spare is its call, since 14.23 is its whole balance.
+- **Limits sized to that funding:**
+  - `max_size` 1 lot;
+  - inventory band 0 to 2 long tokens, so the maker never sells what it does not hold;
+  - delegate allowances of 2 long tokens and 4 USDC, the hard cap on chain;
+  - `max_fills_per_hour` 4.
+- **Worst case:** settlement in the money pays out of the collateral, so the writer can lose all
+  of what it locked (10 USDC at 2 contracts). When its USDC cannot cover one contract, the
+  cycle does not write, `collateral` fires, and the maker quotes only what it still holds.
+- **Weekly cycle:** `scripts/demo-roll.sh` under launchd
+  (`com.quotebook.demo-roll.<name>`, as varswap's `window-roll.sh`). Idempotent, and it acts only
+  on what is missing:
+  1. reads metalbook's listed 1 oz XAG capped calls for the next expiry, picking the strike
+     nearest spot;
+  2. creates the matching quotebook series (admin `GZhm…tVnL`, `base_lot` 1, `quote_lot` 10,000,
+     `fee_bps` 0);
+  3. mints contracts with `metalbook-sdk`, up to the band and the funding;
+  4. creates the token accounts and approves the delegate on them;
+  5. after settlement, redeems and claims through metalbook's flow, and revokes the old
+     approvals.
+  - The admin key signs here, so a cycle only ever calls `create_series`; it logs what it did
+    to `roll.log`.
+- **Taker:** `quotebook-demo-taker` (in `demo/`), reusing the I9 taker `3ZBj…sqLs`, which already
+  holds 8.77 USDC, so no new funding is needed. One run does this:
   1. reads the quotable series;
   2. requests a quote from the demo maker for 1 lot;
   3. checks it as `quotebook-taker` does;
@@ -216,6 +269,9 @@ the chain and the maker's local endpoint.
   6. appends one JSON line (time, series, side, price, size, fee, signature, slot, CU,
      balances before and after) to `trades.jsonl`.
   - **Sides alternate** (buy, then sell back) so inventory stays near flat, inside D1's band.
+    Each round trip costs the taker the spread, about 0.06 USDC at I9's 2.5% half-spread on a
+    1.20 mid, so its balance lasts about 140 round trips (10 weeks at two a day). The watcher's
+    `inventory` floor reports when it runs low.
 - **launchd:** `com.quotebook.demo-taker.<name>`, `StartInterval` 21,600 (every 6 h), skipped
   outside market hours and inside the settlement window.
 - **Recording:**
@@ -265,9 +321,13 @@ the chain and the maker's local endpoint.
     - forged variants (extra program, second fill, wrong mint or amount, expired, maker not
       signer), each rejected with its reason;
     - deadline handling.
-  - **Optional:** running the toolkit's offline Vitest acceptance suite against `localhost`.
-    It needs `npm install` of a third-party repo in an isolated directory, so it only runs if
-    SOLANA-PROJECTS agrees (question 4).
+  - **Jupiter's acceptance suite** (approved, msg 51662): the toolkit's offline Vitest suite
+    runs against `localhost` under these conditions:
+    - an isolated directory outside the repo, at a pinned commit SHA recorded in the PR;
+    - `npm ci --ignore-scripts`;
+    - `env -i` with only `PATH` and `WEBHOOK_URL`, so no credentials are in the environment;
+    - only the offline suite: the integration tests go through Jupiter's Edge and perform real
+      mainnet swaps, and they are never run.
 - **New dependencies:** `axum` 0.8 (0.8.9) and its `tower`/`hyper` stack; `base64`. They are
   checked and cited in the PR, and only `jupiter-rfq/` uses them.
 
@@ -286,13 +346,13 @@ the chain and the maker's local endpoint.
 | D2 | metalbook pricing with optfix 0.3 strips | M | |
 | D3 | Hosted demo maker (launchd, own payer and key) | M | D1, D2 |
 | D4 | Watcher and alerts | S | D3 |
-| D5 | Recurring trade with metalbook | M | D3, D4, metalbook series and funding |
+| D5 | Writer cycle and recurring trade with metalbook | M | D3, D4, metalbook's 1 oz series, USDC |
 | D6 | Jupiter RFQ design and prototype | M | D1 (limits), D2 (pricing) |
 | D7 | Phase report | S | D5, D6 |
 
 D1, D2 and D6's design doc start in parallel. D6's prototype follows D1. Only D5 needs
-metalbook, so its coordination request goes out when this plan is approved, not when D5
-starts.
+metalbook: SOLANA-PROJECTS has told it about the 1 oz series, which arrive after Nov 6. The USDC
+transfer is agreed with its window when D5 starts.
 
 ## Out of scope
 
@@ -302,19 +362,18 @@ starts.
 - Mainnet, Jupiter registration or any call to a Jupiter endpoint, npm or crates.io
   publishing.
 - A volatility surface or an implied-vol feed.
-- Writing metalbook contracts from quotebook code: the maker's long tokens come from the
-  metalbook flow (question 1).
+- XAU and put trading until there is funding for them (D5), and TLS on the maker service (D3).
 
-## Questions for SOLANA-PROJECTS
+## Decisions (SOLANA-PROJECTS, msg 51662)
 
-1. **Funding and series for D5.** A 50 oz XAG capped call at strike 50 locks 250 USDC per
-   contract, and Circle's devnet faucet is slow. Should metalbook list a 1 oz expiry for the
-   demo, or supply long tokens or USDC? Who writes the contracts the maker sells: the demo
-   maker through `metalbook-admin mint`, or metalbook's maker?
-2. **Public endpoint for D3.** Is localhost enough (the taker runs on the same host), or should
-   the demo maker be reachable over `wss://` (a tunnel such as Tailscale Funnel or
-   cloudflared), so it can be listed in the registry?
-3. **Hermes for D2.** Should it share metalbook's and varswap's key (D2 adds 4 requests a
-   minute), use a separate key, or use the public endpoint?
-4. **D6 acceptance suite.** May the toolkit's offline Vitest suite be run locally against
-   `localhost`, after an `npm install` in an isolated directory?
+1. **Series and funding.** metalbook lists 1 oz XAG and XAU demo series and rolls them weekly,
+   after Nov 6. The demo maker is the writer. Funding starts with what `7tVP…cACQ` can spare
+   (about 14 USDC), with limits to match; more on request. Consequence: XAG capped calls only
+   (D5).
+2. **Endpoint.** Localhost is enough, with no tunnel. The profile can carry a documented
+   localhost endpoint. Consequence: a listing that cannot be connected to, because the program
+   requires `wss://` and the service speaks `ws://` (D3).
+3. **Hermes.** The public endpoint, at most one request a minute, with backoff. The shared key's
+   quota is not touched (D2).
+4. **Jupiter's suite.** Allowed in an isolated directory, at a pinned version, with `npm ci
+   --ignore-scripts` where possible and no credentials in the environment (D6).
