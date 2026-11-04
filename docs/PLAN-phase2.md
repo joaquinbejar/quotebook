@@ -1,7 +1,9 @@
 # quotebook: phase 2 plan (devnet operations)
 
-Status: **draft r2**, for Codex review. Brief from SOLANA-PROJECTS, msg 51619 (2026-11-03);
-decisions from msg 51662 are folded in (see "Decisions").
+Status: **draft r3**, for Codex review. Brief from SOLANA-PROJECTS, msg 51619 (2026-11-03);
+decisions from msg 51662 and metalbook's facts from msg 52647 are folded in (see "Decisions").
+One item is open: the spot source ("Open question"), because the public Hermes endpoint refuses
+keyless requests.
 Baseline: `main` at `cf423b2`. The program is **frozen at `3d0ec13`** for the external audit
 (`docs/audit-scope.md`): no milestone here touches `program/` or `quotebook-core/`. Devnet runs
 that binary (`docs/devnet.md`, "I10 upgrade and smoke tests"). All work is off-chain and
@@ -44,16 +46,33 @@ Scope (msg 51619):
   18.
 - Listing is done by hand (`metalbook-admin list-week`); there is no roller and no launchd
   agent.
-- The Nov 6 expiry has 26 series at 50 oz, none written. The devnet log does not show Nov 13
-  as listed yet.
+- **1 oz series already exist** (metalbook, msg 52647: `Config.multiplier` is 1000 for both
+  metals, read on devnet 2026-11-04; only the Nov 6 series are 50 oz). Nov 13 (expiry
+  1794603600) has 24 live 1 oz series, 14 XAU and 10 XAG. Its XAG capped calls are:
+
+  | Strike | Locks | Series |
+  | --- | --- | --- |
+  | 48 | 4.8 USDC | `ZEmgA2iSdz2ruWcX6ARi8jZR6MEiiCpiDjzBGiVZAdW` |
+  | 49 | 4.9 USDC | `R1KQh6RoAbymFvXZ3uxxCzqKshDdNRJzoVar2KgiAsW` |
+  | 50 | 5.0 USDC | `B66MftMja6L6g2XFNLWHUWE2Rjq1yTHtToWQTvxsZx21` (paired with quotebook series 1 since I9) |
+  | 51 | 5.1 USDC | `6NuEV8mbELdVAehtszXJpsHP11mmwaMDkoqWgwMXuZ6r` |
+  | 52 | 5.2 USDC | `HzUsyCk2AAZ1Zy7DS6KLYLB1bprBjsSjmVmgLc1CpWxS` |
+- **Roller** (metalbook's phase 2, from about Nov 9): every 6 h, skipping 2 h around each expiry,
+  it lists the first calendar expiry at least 3 days ahead, a put and a capped call at every $1
+  XAG and $50 XAU strike within ±5% of spot. There is no Nov 27 expiry, so after Nov 20 nothing
+  is listed until about Dec 1. Keepers run by hand on Nov 13 and Nov 20, under launchd after
+  that; a writer's collateral stays locked until settlement.
+- `metalbook-core` and `metalbook-sdk` 0.1.0 as published are byte-identical to main's `src/`
+  (`diff -r`, 2026-11-04), and `Series` is 504 bytes in the crate and on chain (`B66M…`).
 - metalbook's keeper settles each series on a 30-minute Pyth average before expiry.
 - `metalbook-maker::mark` prices a capped call as `C(K) − C(cap)` × multiplier, and refuses
   when the market is closed or the settlement window has begun. That crate is
   `publish = false` and still on optfix 0.2.
-- `metalbook-core` and `metalbook-sdk` 0.1.0 are on crates.io. Their dependencies are bytemuck,
-  `solana-address` 2.7 and `solana-instruction`, the generation quotebook already uses.
+- Their dependencies are bytemuck, `solana-address` 2.7 and `solana-instruction`, the generation
+  quotebook already uses.
 - Its devnet log lists "Trading through QuoteBook, once the maker has more USDC" as not done.
-- USDC on devnet (read 2026-11-04): metalbook's maker `7tVP…cACQ` holds 14.23; the I9 taker
+- USDC on devnet (read 2026-11-04): metalbook's maker `7tVP…cACQ` holds 14.23 and can spare 14.00,
+  with 10 to 15 more on request after Nov 13's redeem and claim (msg 52647). The I9 taker
   `3ZBj…sqLs` holds 8.77.
 
 **Registry and the maker's transport**
@@ -67,8 +86,18 @@ Scope (msg 51619):
   - `bsm::price_strip(expiry, &MarketInputs, &[StripLeg], &mut [Price])` prices many strikes
     of one expiry in one call. Each leg is bit-identical to a single `price`.
   - There is no vol surface: the caller passes one `Volatility`.
-- **Spot:** metalbook and varswap read Pyth Hermes over `ureq` 3.5 with a shared key, whose
-  quota is theirs (metalbook 7 requests a minute, varswap 3). The demo does not use it.
+- **Spot, Hermes:** metalbook and varswap read Pyth Hermes with a shared key, whose quota is
+  theirs (metalbook 7 requests a minute, varswap 3). The public endpoint is no alternative:
+  `hermes.pyth.network/v2/updates/price/latest` without a key answered HTTP 401 `unauthorized`
+  twice on 2026-11-04 (09:11Z and 09:18Z).
+- **Spot, on chain:** devnet has Pyth push-feed accounts for both metals, `PriceUpdateV2` of 134
+  bytes owned by the receiver `rec5…tFJ` at level Full. They are the shard-0 PDAs of
+  `pythWSns…iRsT`: XAU `2uPQ…uEWW` and XAG `H9Jx…Znot` (51.9415 at 09:12Z). Neither metalbook's
+  nor varswap's keeper is their writer: `write_authority` is the account itself. Sampled every
+  15 s for 5 minutes on 2026-11-04, one update arrived 306 s after the last, the age peaked at
+  295 s. **That is a single gap:** the cadence is not documented or guaranteed.
+- `pyth-lite` 0.1.0 (crates.io, no dependencies) decodes and checks that account: owner,
+  discriminator, length, feed id, staleness.
 
 **varswap ops pattern** (origin/main `f5d5c7c`)
 - `scripts/{keeper,watch,window-roll}-agent.sh install|uninstall|status <name>` write plists
@@ -146,11 +175,14 @@ metalbook-specific parts so `maker/` stays generic.
     definition of `metalbook-maker::mark`;
   - the feed returns `None` (no quote) when spot is stale, the market is closed, or `now ≥
     expiry − settlement_window`.
-- **Spot:** a poller on the **public Hermes endpoint, with no key**, at most one request a
-  minute, with both XAU/USD and XAG/USD in that one request and exponential backoff on 429 or
-  5xx. The value is cached and stale after 180 s (three missed polls), so a quote can be priced
-  on a spot up to 3 minutes old. That is accepted for a demo with D5's limits, and is why
-  `max_size` stays at 1 lot. The poller never reads the shared key's environment variable.
+- **Spot (proposed, see "Open question"):** read the two devnet push-feed accounts over RPC,
+  once a minute, and check them with `pyth-lite` (owner, feed id, level Full). No Hermes and no
+  key. The value is stale after 600 s, twice the observed gap, so a quote can be priced on a spot
+  up to 10 minutes old. A 1% XAG move in that time is about 0.25 USDC on a 1 oz at-the-money
+  capped call, against an I9 half-spread near 0.03 USDC. That is accepted for a demo at 1 lot per
+  quote and 2 contracts of exposure, where the only taker is our own script. It would not be
+  acceptable for outside takers.
+- **Confidence guard:** no quote when `conf / price` exceeds 50 bps.
 - **Vol:** one number per underlying from config (the I9 demo used 0.30 for XAG), recorded in
   `docs/devnet.md` with the date; carry 0, rate 4%. A vol source is out of scope (optfix has no
   surface).
@@ -162,7 +194,7 @@ metalbook-specific parts so `maker/` stays generic.
 - **New dependencies** (versions checked on crates.io 2026-11-03):
   - `optfix` 0.3 (0.3.0);
   - `metalbook-core` and `metalbook-sdk` 0.1 (0.1.0);
-  - `ureq` 3.5 (3.5.1), rustls only, as in metalbook. Only `demo/` uses them.
+  - `pyth-lite` 0.1 (0.1.0). Only `demo/` uses them; `ureq` is not needed.
 
 ### D3. Hosted demo maker on devnet (M)
 
@@ -175,7 +207,7 @@ metalbook-specific parts so `maker/` stays generic.
   `keeper-agent.sh`:
   - label `com.quotebook.demo-maker.<name>`;
   - `KeepAlive{SuccessfulExit: false}`, `ThrottleInterval` 120;
-  - no secret in the environment: Hermes is keyless, and the keypairs are file paths;
+  - no secret in the environment: the spot source needs no key (D2, option A), and the keypairs are file paths;
   - logs under `~/.local/share/quotebook-demo/<name>/`;
   - the binary copied out of the checkout, so a later `git pull` does not change what runs.
 - **Restarts** pay the cold start (70 s at 60 s TTL). That is accepted and documented.
@@ -203,8 +235,9 @@ the chain and the maker's local endpoint.
   - `maker-down` (no answer to a probe request within 2 s; the probe asks for a quote and never
     settles it);
   - `stale-spot` (the maker rejects with stale feed for 5 minutes);
-  - `no-series` (no quotable series for the next 24 h while the market is open, which means
-    metalbook has not listed);
+  - `no-series` (no quotable series while the market is open and the calendar says one should
+    be listed). It reads the calendar so the known gaps (after each expiry, until the roller's
+    next listing; Nov 20 to about Dec 1) stay silent;
   - `fill-error` (the taker script's last run failed, read from its log).
 - **Delivery:**
   - each alert runs `QUOTEBOOK_WATCH_ALERT_CMD` with `KIND`, `SUBJECT` and `MESSAGE`, which on
@@ -219,16 +252,16 @@ the chain and the maker's local endpoint.
 
 ### D5. Recurring quotebook × metalbook trade (M; needs metalbook)
 
-- **Series:** metalbook lists **1 oz** XAG and XAU demo series and rolls them weekly as part of
-  its own phase 2, after Nov 6 (msg 51662). D5 cannot trade before they exist; `no-series` (D4)
-  reports it.
+- **Series:** the 1 oz XAG capped calls of Nov 13 are live, so D5 does not wait for the roller.
+  From about Nov 9 the roller lists each next expiry at least 3 days ahead, with strikes around
+  spot. That is enough for 1 lot every 6 h (metalbook asked; answered in msg 52647's thread).
 - **The demo maker is the writer:** it locks its own devnet USDC in metalbook and sells the long
   tokens through quotebook. This is the only milestone that writes metalbook state.
 - **What 14 USDC can write** (one contract, 1 oz; the cap is 10% above the strike):
 
   | Series | Locks per contract | Writable with ~14 USDC |
   | --- | --- | --- |
-  | XAG capped call, strike 50 | 5 USDC | yes, 2, leaving about 4 USDC to buy back |
+  | XAG capped call, strike 48 to 52 | 4.8 to 5.2 USDC | yes, 2, leaving about 3.6 to 4.4 USDC to buy back |
   | XAG put, strike 50 | 50 USDC | no |
   | XAU capped call, strike 4,000 | 400 USDC | no |
   | XAU put, strike 4,000 | 4,000 USDC | no |
@@ -236,27 +269,28 @@ the chain and the maker's local endpoint.
   So the demo **trades XAG capped calls only** and quotes nothing it cannot write. D2 still
   prices XAU and puts, and tests cover them. Trading XAU needs at least 400 USDC per contract,
   which is a funding request to SOLANA-PROJECTS, not a code change.
-- **Funding:** the USDC comes from `7tVP…cACQ`, which metalbook's window signs for. How much it
-  can spare is its call, since 14.23 is its whole balance.
+- **Funding:** metalbook signs a 14.00 USDC transfer from `7tVP…cACQ` to the demo maker's USDC
+  account when D5 starts; 10 to 15 more are available on request after Nov 13.
 - **Limits sized to that funding:**
   - `max_size` 1 lot;
   - inventory band 0 to 2 long tokens, so the maker never sells what it does not hold;
   - delegate allowances of 2 long tokens and 4 USDC, the hard cap on chain;
   - `max_fills_per_hour` 4.
 - **Worst case:** settlement in the money pays out of the collateral, so the writer can lose all
-  of what it locked (10 USDC at 2 contracts). When its USDC cannot cover one contract, the
+  of what it locked (at most 10.4 USDC at 2 contracts). When its USDC cannot cover one contract, the
   cycle does not write, `collateral` fires, and the maker quotes only what it still holds.
 - **Weekly cycle:** `scripts/demo-roll.sh` under launchd
   (`com.quotebook.demo-roll.<name>`, as varswap's `window-roll.sh`). Idempotent, and it acts only
   on what is missing:
   1. reads metalbook's listed 1 oz XAG capped calls for the next expiry, picking the strike
      nearest spot;
-  2. creates the matching quotebook series (admin `GZhm…tVnL`, `base_lot` 1, `quote_lot` 10,000,
-     `fee_bps` 0);
+  2. creates the matching quotebook series if there is none (admin `GZhm…tVnL`, `base_lot` 1,
+     `quote_lot` 10,000, `fee_bps` 0; `B66M…` already has series 1);
   3. mints contracts with `metalbook-sdk`, up to the band and the funding;
   4. creates the token accounts and approves the delegate on them;
-  5. after settlement, redeems and claims through metalbook's flow, and revokes the old
-     approvals.
+  5. after settlement, which a keeper runs by hand on Nov 13 and Nov 20, redeems and claims
+     through metalbook's flow, and revokes the old approvals. The USDC stays locked until then,
+     so a cycle writes only from what is unlocked.
   - The admin key signs here, so a cycle only ever calls `create_series`; it logs what it did
     to `roll.log`.
 - **Taker:** `quotebook-demo-taker` (in `demo/`), reusing the I9 taker `3ZBj…sqLs`, which already
@@ -346,13 +380,14 @@ the chain and the maker's local endpoint.
 | D2 | metalbook pricing with optfix 0.3 strips | M | |
 | D3 | Hosted demo maker (launchd, own payer and key) | M | D1, D2 |
 | D4 | Watcher and alerts | S | D3 |
-| D5 | Writer cycle and recurring trade with metalbook | M | D3, D4, metalbook's 1 oz series, USDC |
+| D5 | Writer cycle and recurring trade with metalbook | M | D3, D4, metalbook's USDC transfer |
 | D6 | Jupiter RFQ design and prototype | M | D1 (limits), D2 (pricing) |
 | D7 | Phase report | S | D5, D6 |
 
 D1, D2 and D6's design doc start in parallel. D6's prototype follows D1. Only D5 needs
-metalbook: SOLANA-PROJECTS has told it about the 1 oz series, which arrive after Nov 6. The USDC
-transfer is agreed with its window when D5 starts.
+metalbook: the Nov 13 series are live, and it signs the USDC transfer when D5 starts. To trade
+before Nov 13, D5 has to land by Nov 12; otherwise it starts on Nov 20's series, listed about
+Nov 15. Nothing depends on that date.
 
 ## Out of scope
 
@@ -373,7 +408,20 @@ transfer is agreed with its window when D5 starts.
 2. **Endpoint.** Localhost is enough, with no tunnel. The profile can carry a documented
    localhost endpoint. Consequence: a listing that cannot be connected to, because the program
    requires `wss://` and the service speaks `ws://` (D3).
-3. **Hermes.** The public endpoint, at most one request a minute, with backoff. The shared key's
-   quota is not touched (D2).
+3. **Hermes.** The public endpoint, at most one request a minute, with backoff; the shared key's
+   quota is not touched. **It cannot be followed as written:** that endpoint answers 401 without
+   a key (see "Open question").
 4. **Jupiter's suite.** Allowed in an isolated directory, at a pinned version, with `npm ci
    --ignore-scripts` where possible and no credentials in the environment (D6).
+
+## Open question (for SOLANA-PROJECTS)
+
+The public Hermes endpoint answers 401 without a key, so decision 3 needs replacing. D2 is
+written for option A; the plan changes only in D2's spot lines and its dependency.
+
+- **A (proposed): the devnet push-feed accounts over RPC.** No key and no Hermes quota, and
+  `pyth-lite` already handles the format. The cost is a staler spot, about 5
+  minutes in the one gap measured and with no guarantee of cadence. The watcher's `stale-spot`
+  alert reports it if the feeds stop.
+- **B: a separate Hermes key for the demo.** A fresher spot, but it needs Joaquin to obtain a key
+  and adds a secret to the launchd job.
