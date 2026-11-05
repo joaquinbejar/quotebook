@@ -1,9 +1,9 @@
 # quotebook: phase 2 plan (devnet operations)
 
-Status: **draft r4**, for Codex review. Brief from SOLANA-PROJECTS, msg 51619 (2026-11-03);
-decisions from msg 51662 and metalbook's facts from msg 52647 are folded in (see "Decisions").
-One item is open: the spot source ("Open question"), because the public Hermes endpoint refuses
-keyless requests.
+Status: **draft r5**, for Codex review. Brief from SOLANA-PROJECTS, msg 51619 (2026-11-03);
+decisions from msgs 51662, 53465 and 53489 and metalbook's facts from msg 52647 are folded in
+(see "Decisions"). No item is open: the spot source is decided and its sample passed ("Spot
+source").
 Baseline: `main` at `cf423b2`. The program is **frozen at `3d0ec13`** for the external audit
 (`docs/audit-scope.md`): no milestone here touches `program/` or `quotebook-core/`. Devnet runs
 that binary (`docs/devnet.md`, "I10 upgrade and smoke tests"). All work is off-chain and
@@ -23,7 +23,7 @@ Scope (msg 51619):
 3. A real, recurring quotebook × metalbook trade (a taker script), recorded in
    `docs/devnet.md` and coordinated with metalbook for the series.
 
-## Facts this plan relies on (checked 2026-11-03)
+## Facts this plan relies on (checked 2026-11-03 to 2026-11-05)
 
 **quotebook maker** (`maker/`, not in audit scope)
 - It prices through two traits, `server::PriceFeed` (`mid() -> Option<Decimal>`, `None` when
@@ -35,6 +35,13 @@ Scope (msg 51619):
 - `QuoteRequest` already carries `series` (`maker/src/protocol.rs:22`), so one service can
   route requests to several markets.
 - The cold start is `max_ttl_any_series + 10 s` on every restart (`maker/src/lib.rs`).
+- `respond` checks size and price, then locks the issuer only to take a nonce
+  (`maker/src/server.rs:209`), so a limit checked before that lock would not be atomic with it.
+- On chain a quote fills only while `issued_at − 10 s <= now < expires_at`
+  (`quotebook-core/src/quote.rs:137`). `NonceWindow::check` is public and fails for a nonce that
+  is used, cancelled or below the window, so reconciling fills needs no change to `core`.
+- `quotebook-admin` already has `cancel-all`, `approve` and `revoke`, with keypair paths
+  (`cli/src/bin/quotebook-admin.rs`).
 
 **metalbook** (origin/main `275525d`)
 - Program: `FPPu…suwg`, with Circle devnet USDC (`4zMM…ncDU`, 6 decimals) as collateral.
@@ -70,6 +77,9 @@ Scope (msg 51619):
   `publish = false` and still on optfix 0.2.
 - Their dependencies are bytemuck, `solana-address` 2.7 and `solana-instruction`, the generation
   quotebook already uses.
+- A writer's position is the 80-byte PDA `["writer", series, owner]` with `written` (contracts
+  written and not closed) and `claimed` (`metalbook-core/src/accounts.rs`). That is the on-chain
+  source for D5's writer cap.
 - Its devnet log lists "Trading through QuoteBook, once the maker has more USDC" as not done.
 - USDC on devnet (read 2026-11-04): metalbook's maker `7tVP…cACQ` holds 14.23 and can spare 14.00,
   with 10 to 15 more on request after Nov 13's redeem and claim (msg 52647). The I9 taker
@@ -98,10 +108,27 @@ Scope (msg 51619):
   295 s. **That is a single gap:** the cadence is not documented or guaranteed.
 - **These feeds have failed before:** metalbook stopped using sponsored push feeds because the
   XAG account was stale when checked on 2026-10-29 (`metalbook/docs/devnet.md`, "Facts to rely
-  on"; whether it was this same account is not known). A 24-hour sample at one read a minute
-  is running, until 2026-11-05 about 09:20Z, and decides option A (see "Open question").
+  on"; whether it was this same account is not known).
+- **24-hour sample, 2026-11-04 09:21Z to 2026-11-05 09:21Z** (Wednesday to Thursday), one read
+  a minute per feed, 1,441 reads each, no read errors:
+
+  | | XAU | XAG |
+  | --- | --- | --- |
+  | Largest gap between updates, market open | 316 s | 316 s |
+  | Typical gap (p50, p90) | 306 s, 307 s | 306 s, 307 s |
+  | Gaps above 600 s | 1 (3,629 s) | 1 (3,629 s) |
+  | Age at read, market open: maximum | under 320 s | under 320 s |
+  | `conf / price`: p50, maximum | 0.51, 7.34 bps | 1.87, 9.42 bps |
+  | Price move between consecutive updates: p50, p99, maximum | 5.0, 28.5, 37.2 bps | 9.3, 61.0, 61.7 bps |
+
+  - The one gap above 600 s is 21:59:59Z to 23:00:28Z, the metals market's daily break (17:00 to
+    18:00 New York). Every read older than 320 s falls inside it.
+  - **Limits of this sample:** it is one day and has no weekend. Both feeds publish at the same
+    instants, so they are one source and can fail together. It says nothing about tomorrow.
 - `pyth-lite` 0.1.0 (crates.io, no dependencies) decodes and checks that account: owner,
-  discriminator, length, feed id, staleness.
+  discriminator, length, verification level, feed id, positive price, staleness, confidence.
+  It treats a `publish_time` ahead of `now` as fresh and does not check the exponent
+  (`src/update.rs`, `PriceUpdate::verify`), so D2 adds both checks.
 
 **varswap ops pattern** (origin/main `f5d5c7c`)
 - `scripts/{keeper,watch,window-roll}-agent.sh install|uninstall|status <name>` write plists
@@ -135,31 +162,85 @@ Scope (msg 51619):
 
 ## Milestones
 
-### D1. Multi-series maker service (M)
+### D1. Multi-series maker service, risk book (M)
 
 The demo quotes every listed metalbook series under one maker key, so the service has to
-route several markets through one nonce issuer.
+route several markets through one nonce issuer, and every firm quote it has signed has to hold
+its funds until it can no longer fill.
 
 - **Routing:** `maker::server` serves a set of markets keyed by series address, all sharing one
-  `Mutex<NonceIssuer>` and one `MakerKey`. A request for a series outside the set is refused
-  with `UnknownSeries`.
+  `MakerKey`. A request for a series outside the set is refused with `UnknownSeries`.
 - **Per market:**
   - each market has its own `PriceFeed`, `Inventory`, `PricingParams`, TTL and `max_size`;
   - the cold start uses the longest `max_quote_ttl` across the set.
 - **Compatibility:** the single-series constructor stays as a one-market wrapper, so
-  `quotebook-maker` and its tests do not change behaviour.
-- **Risk limits** are new, enforced before a nonce is issued, each with a `RejectReason`:
-  - `max_open_quotes` across all markets (live, unexpired, unsettled quotes);
-  - per-market `max_notional` in quote atoms;
-  - a per-market inventory band (`max_long`, `max_short` in base lots), read from
-    `Inventory`;
-  - a global `max_fills_per_hour`;
-  - a **kill switch**: when a file (path in config) exists, everything is refused with
-    `Halted`.
+  `quotebook-maker` and its tests do not change behaviour. The limits are optional there.
+- **One lock:** a `Mutex<RiskBook>` holds the `NonceIssuer` and the reservations together.
+  Pricing runs before the lock. Under it, in one critical section: the halt check, every limit,
+  the reservation, then the nonce. The quote is signed after the lock is released. If building
+  it fails, the reservation is dropped, since nothing signed left the service.
+- **Reservations:** each signed quote reserves what a fill would take from the maker:
+  - a taker buy reserves `size` of the market's long token account;
+  - a taker sell reserves `price × size` of the USDC account, which **all markets share**, so a
+    quote on one series reduces what every other series can quote;
+  - available = `min(balance, delegated_amount)` from the latest snapshot, minus all reservations
+    on that account. A quote that does not fit is refused with `RiskLimit`.
+- **Snapshots:** a `ChainView` trait returns one `getMultipleAccounts` at `finalized`, so all of it
+  is from one slot: the Clock sysvar, the maker's `MakerState` and every maker token account. The
+  RPC implementation is in `demo/`, using the client `cli/` already has; `maker/` gains no RPC
+  dependency. It polls every 10 s.
+- **Releases, only from a finalized snapshot.** A reservation ends when either holds in the same
+  snapshot:
+  - `window.check(nonce)` fails: the nonce was used or cancelled, and the balances read in that
+    snapshot already include the fill;
+  - Clock `>= expires_at`: the chain can never fill it again, and its balances include any fill
+    that happened.
+  - Nothing is released on wall-clock time or on `confirmed` data, so a dropped fork cannot
+    release funds. What a fill brings in counts only once it is finalized, on the safe side.
+- **Fail closed:** when the snapshot is older than `max_snapshot_age` (60 s), an RPC call fails or
+  a snapshot's slot goes backwards, the service refuses everything with `RiskUnavailable` and
+  releases nothing.
+- **Restart:** reservations live in memory. After a restart no quote is issued until the cold
+  start has passed **and** a snapshot's Clock is past its end, so every quote from before the
+  restart is dead and its fills are in the balances.
+- **Limits**, each with a `RejectReason`:
+  - `max_open_quotes` across all markets: the number of reservations, so a quote stays open until
+    it is released, not until its wall-clock expiry;
+  - per-market `max_notional` in quote atoms, summed over the market's open quotes;
+  - a per-market inventory band (`max_long`, `max_short` in base lots), projected: the
+    snapshot's position with every open quote on that side assumed filled;
+  - a global `max_fills_per_hour`: fills are nonces seen used in finalized snapshots, by that
+    snapshot's Clock, never quotes issued. The check is `fills in the last hour + open quotes <
+    limit`, so each firm quote counts as a possible fill. A nonce the maker cancelled itself also
+    counts, on the safe side;
+  - `allowed_takers`: a request for any other taker is refused with `TakerNotAllowed`, so the demo
+    signs only for its own taker (msg 53465).
+- **Halt and drain.** A halt file stops new quotes. **It does not revoke quotes already signed:**
+  they stay fillable until they expire.
+  - **The file:** when it exists, or when reading it fails with anything but not found,
+    everything is refused with `Halted`. It is checked inside the lock on each request.
+  - **Drain:** wait until a finalized snapshot's Clock reaches `newest_expires_at`.
+  - **Revoke, in an emergency:** `quotebook-admin cancel-all --new-min <next nonce>`, then
+    `revoke` on every maker account, then confirm both at `finalized`. A service that has
+    cancelled restarts, paying the cold start, because a live issuer cannot jump its counter
+    (`maker/src/issuer.rs`).
+  - **Reuse:** no allowance is changed and no maker key is rotated or reused until a drain or a
+    revoke is confirmed. If the service is down, there is nothing to ask: wait out
+    `max_quote_ttl + 10 s` on the chain's Clock from when it stopped.
+- **Status request:** a new `ClientMessage::Status` answers with `halted`, `open_quotes`,
+  `next_nonce`, `newest_expires_at`, the snapshot's age and each spot's age. It takes no nonce and
+  no reservation. The watcher (D4) and the drain use it; a quote is no longer needed as a probe.
 - **Hard cap on chain:** the delegate allowance on each maker account. The service is
   configured below it and the watcher (D4) alerts as it drains.
-- **Tests:** unit tests for routing, every limit and the kill switch. A LiteSVM test runs two
-  series under one key and checks that no nonce is issued twice.
+- **Tests:**
+  - unit tests for routing, every limit and the halt file, including an unreadable one;
+  - concurrent requests on several series racing for the last USDC: exactly what fits is signed;
+  - quote is not fill: expired and unfilled releases, filled counts toward the hour;
+  - lag and rollback, with a fake `ChainView`: a stale snapshot, a slot going backwards, a fill
+    seen and then gone before finality, an RPC error. Each refuses and releases nothing;
+  - restart: no quote before a snapshot's Clock passes the cold start;
+  - a LiteSVM test with two series under one key: no nonce issued twice, and `cancel-all` kills a
+    signed quote.
 
 ### D2. metalbook pricing with optfix 0.3 strips (M)
 
@@ -179,14 +260,30 @@ metalbook-specific parts so `maker/` stays generic.
     definition of `metalbook-maker::mark`;
   - the feed returns `None` (no quote) when spot is stale, the market is closed, or `now ≥
     expiry − settlement_window`.
-- **Spot (proposed, see "Open question"):** read the two devnet push-feed accounts over RPC,
-  once a minute, and check them with `pyth-lite` (owner, feed id, level Full). No Hermes and no
-  key. The value is stale after 600 s, twice the observed gap, so a quote can be priced on a spot
-  up to 10 minutes old. A 1% XAG move in that time is about 0.25 USDC on a 1 oz at-the-money
-  capped call, against an I9 half-spread near 0.03 USDC. That is accepted for a demo at 1 lot per
-  quote and 2 contracts of exposure, where the only taker is our own script. It would not be
-  acceptable for outside takers.
-- **Confidence guard:** no quote when `conf / price` exceeds 50 bps.
+- **Spot (decided, see "Spot source"):** read the two devnet push-feed accounts over RPC, once a
+  minute. No Hermes and no key.
+  - **Checks on each read:** `PriceUpdate::load` (owner, discriminator, length) and `verify` (level
+    Full, feed id, positive price, age, confidence).
+  - **Added, because `pyth-lite` does not check them:** `publish_time` at most 30 s ahead of `now`;
+    the exponent inside `-12..=0`; `publish_time` never lower than the last one accepted.
+  - **Fails closed at run time:** age is computed again on every `mid()` from the stored
+    `publish_time`, so if the reader stops, quotes stop too. Older than 600 s means no quote, plus
+    the `stale-spot` alert (D4). A failed read keeps the old value only until that limit.
+- **The sample is an entry gate, not a guarantee.** Two separate conditions had to hold before
+  quotes could be enabled: the coordinator's GO (msg 53489) and the 24-hour sample's pass. Both
+  hold. Neither says the feed will keep working; the run-time rule above is what protects the
+  maker.
+- **600 s and 50 bps are demo settings, not a statement about price quality.** In open hours, a
+  quote is priced on a spot about 160 s old at the median and up to about 380 s (the 320 s measured
+  plus the one-minute read interval). The largest XAG move between updates in
+  the sample, 62 bps, is about 0.16 USDC on a 1 oz at-the-money capped call, against an I9
+  half-spread near 0.03 USDC, so a taker who knew the fresh price could pick the maker off. That is
+  accepted only because the service signs for its own taker (`allowed_takers`), on localhost, at 1
+  lot per quote under D5's real cap on written contracts. It is not acceptable for outside takers.
+- **Confidence guard:** no quote when `conf / price` exceeds 50 bps. In the sample it would never
+  have fired (9.42 bps at most), so it catches a broken feed, not a stale one.
+- **Expected downtime:** no quotes from about 22:10Z to 23:00Z each day (the break, plus 600 s) and
+  over the weekend. Both are correct behaviour, independent of the market-hours check.
 - **Vol:** one number per underlying from config (the I9 demo used 0.30 for XAG), recorded in
   `docs/devnet.md` with the date; carry 0, rate 4%. A vol source is out of scope (optfix has no
   surface).
@@ -194,7 +291,8 @@ metalbook-specific parts so `maker/` stays generic.
   `quote_lot_size` and rounded toward the maker on each side (`maker::market`).
 - **Tests:** against fixtures produced by `metalbook-maker::mark` on the same inputs; strip
   marks must equal them exactly, since the legs are bit-identical. Also: a stale feed, the
-  closed market and the settlement window.
+  closed market, the settlement window, a future `publish_time`, an out-of-range exponent, a
+  `publish_time` going backwards, and the reader stopping with a value in hand.
 - **New dependencies** (versions checked on crates.io 2026-11-03):
   - `optfix` 0.3 (0.3.0);
   - `metalbook-core` and `metalbook-sdk` 0.1 (0.1.0);
@@ -211,7 +309,8 @@ metalbook-specific parts so `maker/` stays generic.
   `keeper-agent.sh`:
   - label `com.quotebook.demo-maker.<name>`;
   - `KeepAlive{SuccessfulExit: false}`, `ThrottleInterval` 120;
-  - no secret in the environment: the spot source needs no key (D2, option A), and the keypairs are file paths;
+  - no secret in the environment: the spot source needs no key (D2), and the keypairs are file
+    paths;
   - logs under `~/.local/share/quotebook-demo/<name>/`;
   - the binary copied out of the checkout, so a later `git pull` does not change what runs.
 - **Restarts** pay the cold start (70 s at 60 s TTL). That is accepted and documented.
@@ -222,13 +321,15 @@ metalbook-specific parts so `maker/` stays generic.
   demo (localhost, not reachable)`. `discover` lists it, but `--discover` cannot connect to it,
   and the demo taker never uses that mode. Making it connectable needs TLS on the server, which
   is out of scope here.
-- **Runbook:** `docs/runbooks.md` gets start, stop (by PID or `launchctl bootout`), key
-  rotation, refilling, the kill switch and recovery from a crash loop.
+- **Halt commands:** `scripts/demo-agent.sh halt <name>` (halt file and drain) and `revoke <name>`
+  (D1's emergency path: `cancel-all`, `revoke`, confirmed at `finalized`).
+- **Runbook:** `docs/runbooks.md` gets start, stop (by PID or `launchctl bootout`), halt, drain and
+  revoke with the order D1 requires, key rotation, refilling and recovery from a crash loop.
 
 ### D4. Watcher and alerts (S)
 
 `quotebook-demo-watch` (in `demo/`), mirroring `varswap-watch`. It holds no key and only reads
-the chain and the maker's local endpoint.
+the chain and the maker's local status (D1).
 
 - **Alert kinds:**
   - `balance` (payer SOL below `--min-balance`, default 0.3 SOL on devnet);
@@ -236,12 +337,19 @@ the chain and the maker's local endpoint.
   - `collateral` (the writer's USDC below one contract's `max_payout` when the next cycle is
     due);
   - `allowance` (a delegate allowance below 20% of its approval);
-  - `maker-down` (no answer to a probe request within 2 s; the probe asks for a quote and never
-    settles it);
-  - `stale-spot` (the maker rejects with stale feed for 5 minutes);
+  - `maker-down` (no answer to a `Status` request within 2 s; it takes no nonce or reservation);
+  - `stale-spot` (a spot older than 600 s, read from the feed accounts by the watcher itself, so
+    it does not depend on the maker). During a scheduled closure, it writes one line marked
+    `expected` per closure and does not re-alert, since the daily break would otherwise alert every
+    day. It is a normal alert from 600 s after the scheduled reopening;
+  - `risk-unavailable` (the maker's snapshot is older than `max_snapshot_age`);
+  - `halted` (the halt file exists, re-alerted as any other);
+  - `writer-cap` (open written contracts or committed collateral, read from chain, above D5's cap;
+    this should never fire, so it means a bug or a key used elsewhere);
   - `no-series` (no quotable series while the market is open and the calendar says one should
     be listed). It reads the calendar so the known gaps (after each expiry, until the roller's
-    next listing; Nov 20 to about Dec 1) stay silent;
+    next listing; Nov 20 to about Dec 1) stay silent, as does a series the writer cap is blocking
+    (D5);
   - `fill-error` (the taker script's last run failed, read from its log).
 - **Delivery:**
   - each alert runs `QUOTEBOOK_WATCH_ALERT_CMD` with `KIND`, `SUBJECT` and `MESSAGE`, which on
@@ -273,32 +381,58 @@ the chain and the maker's local endpoint.
   So the demo **trades XAG capped calls only** and quotes nothing it cannot write. D2 still
   prices XAU and puts, and tests cover them. Trading XAU needs at least 400 USDC per contract,
   which is a funding request to SOLANA-PROJECTS, not a code change.
-- **Funding:** metalbook signs a 14.00 USDC transfer from `7tVP…cACQ` to the demo maker's USDC
-  account when D5 starts; 10 to 15 more are available on request after Nov 13.
+- **Funding, in this order:** D5 starts by sending metalbook the demo maker's USDC account;
+  metalbook signs a 14.00 USDC transfer from `7tVP…cACQ` to it; the first cycle runs only after
+  that lands. 10 to 15 more are available on request after Nov 13.
 - **Limits sized to that funding:**
   - `max_size` 1 lot;
   - inventory band 0 to 2 long tokens, so the maker never sells what it does not hold;
   - delegate allowances of 2 long tokens and 4 USDC, the hard cap on chain;
-  - `max_fills_per_hour` 4.
+  - `max_fills_per_hour` 4;
+  - `allowed_takers` holds only `3ZBj…sqLs`.
+- **A real cap on contracts written (msg 53489).** The band limits long tokens held, not contracts
+  written: after selling 2, inventory is 0 and the band would allow a third mint, paid for from
+  premiums and cash. So the cycle enforces, per maker and across **every series and expiry**:
+  - `max_written_contracts` 2;
+  - `max_committed_collateral` 10.40 USDC.
+  - **Source:** the chain alone, at `finalized`: every `Writer` account of this owner
+    (`getProgramAccounts`, filtered by tag and owner; D5's first step checks that the RPC serves
+    it). Open contracts are `written` while `claimed` is 0; committed is that times each series'
+    `max_payout`.
+  - **Release:** capacity comes back only when a `close` or `claim_writer` is finalized. A mint, a
+    roll or a new expiry releases nothing.
+  - **Fails closed:** a failed or partial read means no mint.
+  - **Consequence:** with 2 contracts open on Nov 13, the Nov 20 cycle writes nothing until Nov
+    13's claim is finalized. The maker may have nothing to sell for a few days; that is accepted,
+    and the taker logs `no inventory` rather than failing.
 - **Worst case:** settlement in the money pays out of the collateral, so the writer can lose all
-  of what it locked (at most 10.4 USDC at 2 contracts). When its USDC cannot cover one contract, the
-  cycle does not write, `collateral` fires, and the maker quotes only what it still holds.
+  of what it locked, at most 10.40 USDC by the cap above. When its USDC cannot cover one contract,
+  the cycle does not write, `collateral` fires, and the maker quotes only what it still holds.
 - **Weekly cycle:** `scripts/demo-roll.sh` under launchd
   (`com.quotebook.demo-roll.<name>`, as varswap's `window-roll.sh`). Idempotent, and it acts only
-  on what is missing:
+  on what is missing. It holds a lock file, so only one cycle runs. Minting spends the USDC that
+  bid quotes reserve, and approving replaces an allowance, so steps 3 to 5 run **between a D1 halt
+  and drain and a finalized confirmation**, a pause of about 70 s a week:
   1. reads metalbook's listed 1 oz XAG capped calls for the next expiry, picking the strike
      nearest spot;
   2. creates the matching quotebook series if there is none (admin `GZhm…tVnL`, `base_lot` 1,
      `quote_lot` 10,000, `fee_bps` 0; `B66M…` already has series 1);
-  3. mints contracts with `metalbook-sdk`, up to the band and the funding;
+  3. mints contracts with `metalbook-sdk`, up to the band, the funding and the writer cap;
   4. creates the token accounts and approves the delegate on them;
   5. after settlement, which a keeper runs by hand on Nov 13 and Nov 20, redeems and claims
      through metalbook's flow, and revokes the old approvals. The USDC stays locked until then,
      so a cycle writes only from what is unlocked.
-  - The admin key signs here, so a cycle only ever calls `create_series`; it logs what it did
-    to `roll.log`.
-- **Taker:** `quotebook-demo-taker` (in `demo/`), reusing the I9 taker `3ZBj…sqLs`, which already
-  holds 8.77 USDC, so no new funding is needed. One run does this:
+  - **The admin key in a scheduled job is devnet only.** `GZhm…tVnL` signs only `create_series`,
+    logged to `roll.log`. Its plist is dedicated to this job and holds the key's file path, no key
+    material (msg 53465). **This is not allowed on mainnet:** a scheduled job never holds a mainnet
+    admin key. `docs/devnet.md` and `docs/runbooks.md` carry the same line.
+- **Tests for the cap:** sell then roll (2 sold, inventory 0, cash available, third mint refused);
+  two expiries coexisting (Nov 13 open blocks Nov 20's write; its finalized claim allows it; a claim
+  not yet finalized does not); a failed `Writer` read refuses; a mint with a live quote waits for
+  the drain.
+- **Taker:** `quotebook-demo-taker` (in `demo/`), reusing the I9 taker `3ZBj…sqLs` (approved, msg
+  53465), which already holds 8.77 USDC, so no new funding is needed. Its plist holds the keypair's
+  file path only. One run does this:
   1. reads the quotable series;
   2. requests a quote from the demo maker for 1 lot;
   3. checks it as `quotebook-taker` does;
@@ -369,7 +503,36 @@ the chain and the maker's local endpoint.
 - **New dependencies:** `axum` 0.8 (0.8.9) and its `tower`/`hyper` stack; `base64`. They are
   checked and cited in the PR, and only `jupiter-rfq/` uses them.
 
-### D7. Phase report (S)
+### D7. Dashboard section (S)
+
+A small quotebook section in the shared dashboard (msg 53465), the last milestone that builds
+anything. The format is `section.json` version 1, from varswap's own `docs/PLAN-phase2.md`, P3a,
+and its `docs/dashboard.md` and schema once they merge.
+
+- **Generator:** `scripts/dashboard.sh <out-dir>` writes `<out-dir>/quotebook/section.json`. It
+  reads public chain data only: the demo maker's signatures and its `settle` transactions, over
+  devnet's public RPC. It holds no key, reads no local file and makes no Hermes request.
+- **Content:**
+  - tiles: fills, volume in USDC and the last fill's time;
+  - one series: cumulative fills;
+  - one table of the latest fills, at most 100 rows (time, series, side, price, size, signature),
+    with `href_columns` to the devnet explorer;
+  - `status` is `warn` when no fill has landed in 24 h of open market, `stale` after 48 h.
+- **Nothing private:** only public addresses, amounts and signatures of landed transactions. The
+  RPC URL is not written to `source` or to logs.
+- **Publication:** as in varswap's P4: `.github/workflows/dashboard.yml`, daily at 23:00Z and on
+  `workflow_dispatch`, on hosted runners with no secrets, `pages: write`, `id-token: write`,
+  `contents: read`, the Pages actions pinned by SHA, and no new required check. Pages is not enabled
+  on this repo today (API 404 on 2026-11-05), so this milestone turns it on.
+- **URL:** `https://joaquinbejar.github.io/quotebook/quotebook/section.json`. It is confirmed to
+  varswap (`joaquin/s-094edf5fc368`) only after the first deploy, because the shell marks a section
+  stale after 48 h and an unconfirmed entry stays pending.
+- **Tests:** the output validates against the schema in CI, with the `serde_json` already in the
+  workspace; hrefs follow varswap's allowlist; fixture transactions give the expected tiles.
+- **Dependency:** the schema file has to be merged in varswap first; until then D7 builds against
+  the plan's example.
+
+### D8. Phase report (S)
 
 - `docs/devnet.md`: the demo maker's accounts, its parameters (vol, rate, limits), the
   trades so far, the alerts seen and the CU per fill.
@@ -380,13 +543,14 @@ the chain and the maker's local endpoint.
 
 | # | Milestone | Effort | Depends on |
 | --- | --- | --- | --- |
-| D1 | Multi-series maker service, risk limits, kill switch | M | |
+| D1 | Multi-series maker service, risk book, halt and drain | M | |
 | D2 | metalbook pricing with optfix 0.3 strips | M | |
 | D3 | Hosted demo maker (launchd, own payer and key) | M | D1, D2 |
 | D4 | Watcher and alerts | S | D3 |
 | D5 | Writer cycle and recurring trade with metalbook | M | D3, D4, metalbook's USDC transfer |
 | D6 | Jupiter RFQ design and prototype | M | D1 (limits), D2 (pricing) |
-| D7 | Phase report | S | D5, D6 |
+| D7 | Dashboard section | S | D5, varswap's schema |
+| D8 | Phase report | S | D6, D7 |
 
 D1, D2 and D6's design doc start in parallel. D6's prototype follows D1. Only D5 needs
 metalbook: the Nov 13 series are live, and it signs the USDC transfer when D5 starts. To trade
@@ -413,22 +577,27 @@ Nov 15. Nothing depends on that date.
    localhost endpoint. Consequence: a listing that cannot be connected to, because the program
    requires `wss://` and the service speaks `ws://` (D3).
 3. **Hermes.** The public endpoint, at most one request a minute, with backoff; the shared key's
-   quota is not touched. **It cannot be followed as written:** that endpoint answers 401 without
-   a key (see "Open question").
+   quota is not touched. **Replaced:** that endpoint answers 401 without a key (see "Spot source").
 4. **Jupiter's suite.** Allowed in an isolated directory, at a pinned version, with `npm ci
    --ignore-scripts` where possible and no credentials in the environment (D6).
 
-## Open question (for SOLANA-PROJECTS)
+## Decisions (SOLANA-PROJECTS, msgs 53465 and 53489)
 
-The public Hermes endpoint answers 401 without a key, so decision 3 needs replacing. D2 is
-written for option A; the plan changes only in D2's spot lines and its dependency.
+1. **Spot.** Push feeds over RPC, maximum age 600 s, conditional on the 24-hour sample; the sample
+   is only the entry gate; at run time the maker fails closed, with an alert. Devnet, own taker
+   only.
+2. **Writer cap.** A real cap on contracts written (D5).
+3. **Taker.** Reusing `3ZBj…sqLs` is approved.
+4. **Admin key in a scheduled job.** `GZhm…tVnL` is approved on devnet only, in a dedicated plist
+   with the file path and no key material, with an explicit line that this is not allowed on
+   mainnet (D5).
+5. **Dashboard.** A small section with trades and fills, as the last milestone (D7).
 
-- **A (proposed, if the sample holds): the devnet push-feed accounts over RPC.** No key and no
-  Hermes quota, and
-  `pyth-lite` already handles the format. The cost is a staler spot, about 5
-  minutes in the one gap measured and with no guarantee of cadence. The watcher's `stale-spot`
-  alert reports it if the feeds stop. **Pass condition for the 24-hour sample,** during open
-  market hours: no gap above the 600 s stale limit in D2, on both feeds. The result is written
-  here with its numbers. If it fails, option A is dropped and B is the only option left.
-- **B: a separate Hermes key for the demo.** A fresher spot, but it needs Joaquin to obtain a key
-  and adds a secret to the launchd job.
+## Spot source
+
+Decided: the devnet push-feed accounts over RPC (D2). The pass condition was no gap above 600 s
+on either feed during open market hours. **It passed:** the largest was 316 s on both, and the only
+longer gap is the daily break (the numbers are in "Facts", with the sample's limits). The fallback,
+a separate Hermes key that the coordinator would ask the user for, was not needed. If the feeds
+stop later, the maker stops quoting and alerts; returning to this question is then the coordinator's
+decision.
