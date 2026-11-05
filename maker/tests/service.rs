@@ -129,6 +129,7 @@ fn signed(answer: ServerMessage) -> SignedQuote {
             signature: from_hex(&m.signature).unwrap().try_into().unwrap(),
         },
         ServerMessage::Reject(r) => panic!("rejected: {r:?}"),
+        ServerMessage::Status(s) => panic!("status: {s:?}"),
     }
 }
 
@@ -136,6 +137,7 @@ fn reason(answer: ServerMessage) -> RejectReason {
     match answer {
         ServerMessage::Reject(r) => r.reason,
         ServerMessage::Quote(_) => panic!("quoted"),
+        ServerMessage::Status(s) => panic!("status: {s:?}"),
     }
 }
 

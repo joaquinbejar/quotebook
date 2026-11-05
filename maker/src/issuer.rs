@@ -162,6 +162,12 @@ impl NonceIssuer {
         Ok(())
     }
 
+    /// After a restart, the first `issued_at` allowed; `None` for a fresh issuer.
+    #[must_use]
+    pub const fn cold_start_until(&self) -> Option<i64> {
+        self.not_before
+    }
+
     /// The nonce the next successful [`NonceIssuer::issue`] returns.
     #[must_use]
     pub fn peek(&self) -> Nonce {

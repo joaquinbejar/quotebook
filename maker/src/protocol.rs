@@ -3,7 +3,9 @@
 //!
 //! The taker sends [`ClientMessage::QuoteRequest`]; the maker answers with
 //! [`ServerMessage::Quote`] (the quote's canonical 208 bytes and the maker's signature, both
-//! hex) or [`ServerMessage::Reject`]. Addresses are base58.
+//! hex) or [`ServerMessage::Reject`]. Addresses are base58. A watcher or a drain sends
+//! [`ClientMessage::Status`], which takes no nonce and holds nothing, and gets
+//! [`ServerMessage::Status`].
 
 use serde::{Deserialize, Serialize};
 
@@ -62,6 +64,16 @@ pub enum RejectReason {
     RateLimited,
     /// Internal failure.
     Internal,
+    /// The series is not one this multi-series service quotes.
+    UnknownSeries,
+    /// A risk limit would be exceeded.
+    RiskLimit,
+    /// The service cannot tell what is at risk: a stale snapshot or a failed read.
+    RiskUnavailable,
+    /// The halt file exists or cannot be read.
+    Halted,
+    /// The service signs only for its configured takers.
+    TakerNotAllowed,
 }
 
 /// A refusal.
@@ -75,12 +87,49 @@ pub struct RejectMessage {
     pub message: String,
 }
 
+/// A request for the service's state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusRequest {
+    /// Echoed in the answer.
+    pub request_id: u64,
+}
+
+/// One market's reference price age.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpotAge {
+    /// The series account, base58.
+    pub series: String,
+    /// Seconds since the spot was published; `None` if the feed does not report it.
+    pub age_secs: Option<i64>,
+}
+
+/// The service's state. It holds no secret and nothing a taker needs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusMessage {
+    /// The request this answers.
+    pub request_id: u64,
+    /// Whether the halt file refuses new quotes. Quotes already signed stay fillable.
+    pub halted: bool,
+    /// Quotes still holding a reservation.
+    pub open_quotes: u32,
+    /// The nonce the next quote would take.
+    pub next_nonce: u64,
+    /// The latest expiry issued since start. A drain waits for a finalized Clock at or past it.
+    pub newest_expires_at: Option<i64>,
+    /// Seconds since the latest snapshot's Clock; `None` before the first snapshot.
+    pub snapshot_age_secs: Option<i64>,
+    /// Each market's spot age.
+    pub spot_ages: Vec<SpotAge>,
+}
+
 /// Taker to maker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     /// Ask for a quote.
     QuoteRequest(QuoteRequest),
+    /// Ask for the service's state.
+    Status(StatusRequest),
 }
 
 /// Maker to taker.
@@ -91,6 +140,8 @@ pub enum ServerMessage {
     Quote(QuoteMessage),
     /// A refusal.
     Reject(RejectMessage),
+    /// The service's state.
+    Status(StatusMessage),
 }
 
 /// Lower-case hex of `bytes`.

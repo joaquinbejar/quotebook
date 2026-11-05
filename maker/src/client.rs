@@ -115,6 +115,7 @@ pub async fn request_quote(url: &str, request: &QuoteRequest) -> Result<Answer, 
             })
         }
         ServerMessage::Quote(_) => Err(ClientError::Protocol("answer to another request".into())),
+        ServerMessage::Status(_) => Err(ClientError::Protocol("status answer to a quote".into())),
         ServerMessage::Reject(r) => Err(ClientError::Rejected {
             reason: r.reason,
             message: r.message,
