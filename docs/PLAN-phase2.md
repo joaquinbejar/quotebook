@@ -284,6 +284,9 @@ metalbook-specific parts so `maker/` stays generic.
   have fired (9.42 bps at most), so it catches a broken feed, not a stale one.
 - **Expected downtime:** no quotes from about 22:10Z to 23:00Z each day (the break, plus 600 s) and
   over the weekend. Both are correct behaviour, independent of the market-hours check.
+- **Weekend behaviour is unmeasured:** the sample covers one Wednesday to Thursday. How the feeds
+  behave across a weekend, and how soon they resume on Sunday, are assumptions until the watcher
+  has seen one. D8 records what the first weekend showed.
 - **Vol:** one number per underlying from config (the I9 demo used 0.30 for XAG), recorded in
   `docs/devnet.md` with the date; carry 0, rate 4%. A vol source is out of scope (optfix has no
   surface).
@@ -341,7 +344,14 @@ the chain and the maker's local status (D1).
   - `stale-spot` (a spot older than 600 s, read from the feed accounts by the watcher itself, so
     it does not depend on the maker). During a scheduled closure, it writes one line marked
     `expected` per closure and does not re-alert, since the daily break would otherwise alert every
-    day. It is a normal alert from 600 s after the scheduled reopening;
+    day. It is a normal alert from 600 s after the scheduled reopening (msg 55249).
+    - **Only the listed windows count**, so the schedule cannot hide an unscheduled outage: the
+      daily break, 17:00 to 18:00 New York, and the weekend, Friday 17:00 to Sunday 18:00 New York,
+      both computed in New York time so daylight saving moves them. They are constants with tests,
+      not inferred from the feed going quiet. A holiday or any other stop alerts.
+    - An alert already firing when a window starts keeps re-alerting; a window never silences it.
+    - The longest a real outage can stay quiet is one that starts just before a window, until 600 s
+      after that window ends. Quotes are stopped throughout either way;
   - `risk-unavailable` (the maker's snapshot is older than `max_snapshot_age`);
   - `halted` (the halt file exists, re-alerted as any other);
   - `writer-cap` (open written contracts or committed collateral, read from chain, above D5's cap;
@@ -523,7 +533,7 @@ and its `docs/dashboard.md` and schema once they merge.
 - **Publication:** as in varswap's P4: `.github/workflows/dashboard.yml`, daily at 23:00Z and on
   `workflow_dispatch`, on hosted runners with no secrets, `pages: write`, `id-token: write`,
   `contents: read`, the Pages actions pinned by SHA, and no new required check. Pages is not enabled
-  on this repo today (API 404 on 2026-11-05), so this milestone turns it on.
+  on this repo today (API 404 on 2026-11-05), so this milestone turns it on (approved, msg 55249).
 - **URL:** `https://joaquinbejar.github.io/quotebook/quotebook/section.json`. It is confirmed to
   varswap (`joaquin/s-094edf5fc368`) only after the first deploy, because the shell marks a section
   stale after 48 h and an unconfirmed entry stays pending.
@@ -535,7 +545,7 @@ and its `docs/dashboard.md` and schema once they merge.
 ### D8. Phase report (S)
 
 - `docs/devnet.md`: the demo maker's accounts, its parameters (vol, rate, limits), the
-  trades so far, the alerts seen and the CU per fill.
+  trades so far, the alerts seen, the CU per fill and how the feeds behaved over the first weekend.
 - `docs/runbooks.md` updated for the demo agents.
 - The final report to SOLANA-PROJECTS, with the open items.
 
@@ -581,7 +591,7 @@ Nov 15. Nothing depends on that date.
 4. **Jupiter's suite.** Allowed in an isolated directory, at a pinned version, with `npm ci
    --ignore-scripts` where possible and no credentials in the environment (D6).
 
-## Decisions (SOLANA-PROJECTS, msgs 53465 and 53489)
+## Decisions (SOLANA-PROJECTS, msgs 53465, 53489 and 55249)
 
 1. **Spot.** Push feeds over RPC, maximum age 600 s, conditional on the 24-hour sample; the sample
    is only the entry gate; at run time the maker fails closed, with an alert. Devnet, own taker
@@ -591,7 +601,11 @@ Nov 15. Nothing depends on that date.
 4. **Admin key in a scheduled job.** `GZhm…tVnL` is approved on devnet only, in a dedicated plist
    with the file path and no key material, with an explicit line that this is not allowed on
    mainnet (D5).
-5. **Dashboard.** A small section with trades and fills, as the last milestone (D7).
+5. **Dashboard.** A small section with trades and fills, as the last milestone (D7), enabling
+   GitHub Pages with no secrets.
+6. **`stale-spot` during closures.** One `expected` line per closure, a normal alert from 600 s
+   after reopening, and only the listed windows count (D4). Weekend behaviour is noted as
+   unmeasured (D2).
 
 ## Spot source
 
