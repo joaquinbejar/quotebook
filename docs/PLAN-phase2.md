@@ -203,6 +203,17 @@ its funds until it can no longer fill.
 - **Restart:** reservations live in memory. After a restart no quote is issued until the cold
   start has passed **and** a snapshot's Clock is past its end, so every quote from before the
   restart is dead and its fills are in the balances.
+- **`max_fills_per_hour` survives a restart.** A counter held only in memory would allow 4 fills,
+  a 70 s restart and 4 more in the same hour. So the count is rebuilt from the chain, after that
+  snapshot and before the first quote:
+  - **Source:** `getSignaturesForAddress` on the maker's `MakerState` at `finalized`, then
+    `getTransaction` on each successful one, walking back until `blockTime` is more than an hour
+    behind the snapshot's Clock.
+  - **Count:** every `settle` instruction, inner ones included, so a transaction holding several
+    counts for all of them. A transaction with no `blockTime` counts as inside the hour.
+  - **Fails closed:** if the history cannot be read in full (an RPC error, a page limit, a
+    transaction that does not decode), the service assumes the limit is used up and refuses with
+    `RiskLimit` until a finalized snapshot's Clock is 3,600 s past the restart.
 - **Limits**, each with a `RejectReason`:
   - `max_open_quotes` across all markets: the number of reservations, so a quote stays open until
     it is released, not until its wall-clock expiry;
@@ -239,6 +250,9 @@ its funds until it can no longer fill.
   - lag and rollback, with a fake `ChainView`: a stale snapshot, a slot going backwards, a fill
     seen and then gone before finality, an RPC error. Each refuses and releases nothing;
   - restart: no quote before a snapshot's Clock passes the cold start;
+  - fill, restart, limit: 4 fills, a restart, and the fifth is refused until the hour has passed;
+    a transaction holding several `settle`s counts for all of them; unreadable or truncated history
+    refuses until 3,600 s of the chain's Clock have passed, not of wall-clock time;
   - a LiteSVM test with two series under one key: no nonce issued twice, and `cancel-all` kills a
     signed quote.
 
