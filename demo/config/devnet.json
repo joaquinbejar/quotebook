@@ -1,0 +1,29 @@
+{
+  "metalbook_program": "FPPuou5kgSp6tbwQRwKPBNhrMyf1Xb8n2ib3Yqpbsuwg",
+  "quotebook_program": "3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo",
+  "usdc_mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  "underlyings": [
+    {
+      "underlying": "XAU",
+      "feed_account": "2uPQGpm8X4ZkxMHxrAW1QuhXcse1AHEgPih6Xp9NuEWW",
+      "feed_id": "765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2",
+      "vol": "0.18",
+      "rate": "0.04",
+      "carry": "0"
+    },
+    {
+      "underlying": "XAG",
+      "feed_account": "H9JxsWwtDZxjSL6m7cdCVsWibj3JBMD9sxqLjadoZnot",
+      "feed_id": "f2fb02c32b055c805e7238d628e5e9dadef274376114eb1f012337cabe93871e",
+      "vol": "0.30",
+      "rate": "0.04",
+      "carry": "0"
+    }
+  ],
+  "pairs": [
+    {
+      "metalbook_series": "B66MftMja6L6g2XFNLWHUWE2Rjq1yTHtToWQTvxsZx21",
+      "quotebook_series": "AbfhiX44ebCSpLEB8ba1gw5vL8qJr7yb7RxYk3CwSCAf"
+    }
+  ]
+}

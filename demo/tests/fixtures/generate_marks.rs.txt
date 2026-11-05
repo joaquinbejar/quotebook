@@ -1,0 +1,73 @@
+//! Generates demo/tests/fixtures/marks.json: `metalbook_maker::mark` on a grid of inputs.
+//! Built against metalbook origin/main (see demo/tests/fixtures/README.md).
+use std::str::FromStr;
+
+use metalbook_core::{
+    OptionKind, OuncesPerContract, SeriesKey, SeriesTerms, StrikeUsd, Underlying, UnixTimestamp,
+};
+use metalbook_maker::{mark, MarketInputs, OptfixPricer};
+use rust_decimal::Decimal;
+
+const USD: u64 = 1_000_000;
+const EXPIRY: i64 = 1_794_603_600;
+const WINDOW_S: u32 = 1_800;
+
+fn main() {
+    // (underlying, kind, strike, cap, multiplier in milli-ounces)
+    let mut series: Vec<(Underlying, OptionKind, u64, u64, u32)> = Vec::new();
+    for k in [48u64, 49, 50, 51, 52] {
+        series.push((Underlying::Xag, OptionKind::Call, k * USD, k * USD * 11 / 10, 1_000));
+    }
+    series.push((Underlying::Xag, OptionKind::Put, 50 * USD, 0, 1_000));
+    series.push((Underlying::Xag, OptionKind::Call, 50 * USD, 55 * USD, 50_000));
+    series.push((Underlying::Xau, OptionKind::Call, 4_000 * USD, 4_400 * USD, 1_000));
+    series.push((Underlying::Xau, OptionKind::Put, 4_000 * USD, 0, 1_000));
+    let xag = ["45.5", "52.84681", "60.125"];
+    let xau = ["3800.5", "4131.857", "4500"];
+    let times = [1_793_900_000i64, 1_794_500_000, 1_794_601_000];
+    let vols = ["0.30", "0.18"];
+    println!("[");
+    let mut first = true;
+    for s in &series {
+        let spots = if s.0 == Underlying::Xag { &xag } else { &xau };
+        for spot in spots {
+            for now in times {
+                for vol in vols {
+                    let key = SeriesKey::try_new(
+                        s.0,
+                        s.1,
+                        StrikeUsd::new(s.2),
+                        UnixTimestamp::new(EXPIRY),
+                    )
+                    .unwrap();
+                    let terms = SeriesTerms::try_new(
+                        key,
+                        OuncesPerContract::try_new(s.4).unwrap(),
+                        StrikeUsd::new(s.3),
+                    )
+                    .unwrap();
+                    let market = MarketInputs {
+                        spot: Decimal::from_str(spot).unwrap(),
+                        vol: Decimal::from_str(vol).unwrap(),
+                        rate: Decimal::from_str("0.04").unwrap(),
+                        carry: Decimal::ZERO,
+                        now,
+                        market_open: true,
+                    };
+                    let m = mark(&OptfixPricer, &terms, &market, WINDOW_S).unwrap();
+                    if !first {
+                        println!(",");
+                    }
+                    first = false;
+                    print!(
+                        "  {{\"underlying\":\"{}\",\"kind\":\"{}\",\"strike\":{},\"cap\":{},\"multiplier\":{},\"expiry\":{},\"window_s\":{},\"spot\":\"{}\",\"vol\":\"{}\",\"rate\":\"0.04\",\"carry\":\"0\",\"now\":{},\"value\":\"{}\",\"max_payout\":\"{}\"}}",
+                        if s.0 == Underlying::Xag { "XAG" } else { "XAU" },
+                        if s.1 == OptionKind::Call { "call" } else { "put" },
+                        s.2, s.3, s.4, EXPIRY, WINDOW_S, spot, vol, now, m.value, m.max_payout
+                    );
+                }
+            }
+        }
+    }
+    println!("\n]");
+}

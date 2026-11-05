@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `quotebook-demo` (`demo/`, not published): metalbook series priced with one optfix 0.3
+  `price_strip` per expiry, spot from the Pyth push feeds over RPC, failing closed on age, market
+  hours and the settlement window (`docs/PLAN-phase2.md`, D2).
 - Series fees (ADR 0001): `create_series` takes an optional `fee_bps` (at most
   `MAX_FEE_BPS` = 100), stored immutably in the series; the taker pays it, floor-rounded, into a
   Config-owned fee account; `withdraw_fees` (tag 8) moves collected fees out.

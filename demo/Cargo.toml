@@ -1,0 +1,33 @@
+[package]
+name = "quotebook-demo"
+description = "quotebook demo maker on devnet: metalbook series priced with optfix strips, spot from Pyth push feeds"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+metalbook-core = { workspace = true }
+metalbook-sdk = { workspace = true }
+optfix = { workspace = true }
+pyth-lite = { workspace = true }
+quotebook-cli = { path = "../cli" }
+quotebook-core = { workspace = true }
+quotebook-maker = { path = "../maker", version = "0.1" }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+solana-account = { workspace = true }
+solana-address = { workspace = true, features = ["decode"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+solana-hash = { workspace = true }
+solana-signature = { workspace = true }
+solana-transaction = { workspace = true }
+
+[lints]
+workspace = true

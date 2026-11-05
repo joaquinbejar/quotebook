@@ -2359,6 +2359,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "metalbook-core"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2df3946d2dd18ba4fe62dffedf8514c0566ef51b98e15eda6fbf2412e1e7fc47"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
+name = "metalbook-sdk"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "320d487a092b28b767cbead32bf0b15bf8e6f41a0a0f0010214380e43f184c9f"
+dependencies = [
+ "metalbook-core",
+ "solana-address 2.7.0",
+ "solana-instruction 3.5.1",
+]
+
+[[package]]
 name = "miniz_oxide"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2528,6 +2548,15 @@ dependencies = [
  "openssl-src",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "optfix"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c10a234906b1a4a48a5b1a25bfba75bd5a931cb468277b116b7dbbb63ac29d2"
+dependencies = [
+ "bytemuck",
 ]
 
 [[package]]
@@ -2760,6 +2789,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyth-lite"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7db340184e9e56981d8853ada40fb55b97d1b716e3c4ff4e4c9e5389a8d1197"
+
+[[package]]
 name = "qstring"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2888,6 +2923,29 @@ dependencies = [
  "bytemuck",
  "proptest",
  "solana-address 2.7.0",
+]
+
+[[package]]
+name = "quotebook-demo"
+version = "0.1.1"
+dependencies = [
+ "metalbook-core",
+ "metalbook-sdk",
+ "optfix",
+ "pyth-lite",
+ "quotebook-cli",
+ "quotebook-core",
+ "quotebook-maker",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "solana-account",
+ "solana-address 2.7.0",
+ "solana-hash",
+ "solana-signature",
+ "solana-transaction",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

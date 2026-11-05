@@ -350,3 +350,23 @@ series 0 maker and taker above.
 - Both maker services (series 0 on `127.0.0.1:9000`, series 2 on `127.0.0.1:9001`) refused
   requests with `RateLimited` during their cold start, quoted after it, and were stopped by
   PID after their fill.
+
+## Demo maker pricing inputs (D2, 2026-11-05)
+
+`demo/config/devnet.json` holds these; the demo maker that uses them runs from D3 on.
+
+| Input | XAG | XAU | Note |
+| --- | --- | --- | --- |
+| Vol | 0.30 | 0.18 | One number per underlying, from configuration; there is no vol source. XAG is the I9 demo's; XAU is what metalbook's adapter tests use, and the demo does not trade XAU. |
+| Rate | 4% | 4% | |
+| Carry | 0 | 0 | |
+| Feed account | `H9JxsWwtDZxjSL6m7cdCVsWibj3JBMD9sxqLjadoZnot` | `2uPQGpm8X4ZkxMHxrAW1QuhXcse1AHEgPih6Xp9NuEWW` | Pyth push feeds, read over RPC once a minute. |
+| Exponent, read 2026-11-05 | -5 | -3 | Accepted range: `-12..=0`. |
+
+No quote when spot is older than 600 s, when `conf / price` is above 50 bps, when the market is
+closed, or from `expiry − window_s` on. These are demo settings, not a statement about price
+quality: acceptable only because the service signs for its own taker (`docs/PLAN-phase2.md`, D2).
+
+The published `metalbook-core`, `metalbook-sdk` and `pyth-lite` 0.1.0 decode the live accounts
+(`demo/tests/devnet_accounts.rs`). Strip marks equal `metalbook_maker::mark` exactly on 162 inputs
+(`demo/tests/marks.rs`), metalbook being on optfix 0.2.1 and `demo/` on 0.3.0.
