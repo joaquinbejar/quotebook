@@ -142,8 +142,8 @@ D1 assumes a nonce and a signed quote. V1 has neither, so each mechanism needs a
 | Halt, drain | Halt declines `/quote` and rejects `/swap`. Drain waits for finalized Clock `>` the newest `expire_at` |
 | `cancel-all`, `revoke` | **None.** The only emergency move is transferring funds out of the hot wallet |
 
-**New limits**, with no D1 counterpart: a floor on the wallet's SOL, since the maker pays fees and
-priority fees; and the fee liability below.
+**New limits**, with no D1 counterpart: a network fee budget, since the maker pays base and priority
+fees on transactions it did not build (see the validator's fee budget); and the fee liability below.
 
 **Reserve at `/swap`, not at `/quote`.** The frontend re-quotes every 3 s and a quote lives 55 s, so
 one user can hold about 18 live quotes, some with no taker named. Reserving each would lock the
@@ -170,7 +170,9 @@ its source, since that crate pulls in Anchor and `solana-sdk`. Beyond the plan's
 
 - **Message:** fee payer is the maker; 2 or 3 signers, with the taker among them after the first.
 - **Programs:** only these, anything else is refused:
-  - Compute Budget: `SetComputeUnitLimit` and `SetComputeUnitPrice`, both required;
+  - Compute Budget: `SetComputeUnitLimit` and `SetComputeUnitPrice`, each exactly once, with values
+    bounded as in the fee budget below; `RequestHeapFrame`, `SetLoadedAccountsDataSizeLimit` and
+    any other Compute Budget instruction are refused;
   - Associated Token: idempotent create only, and the payer is not the maker;
   - System: `Transfer` only, with the taker as source;
   - Token and Token-2022: `TransferChecked`, with the taker as authority, and `SyncNative` only,
@@ -186,6 +188,40 @@ its source, since that crate pulls in Anchor and `solana-sdk`. Beyond the plan's
   not load (`order-engine-sdk/src/transaction.rs`), and Squads-wrapped transactions, whose flags
   are "not faithful" and whose maker slot differs (Settlement). A real integration needs the
   Squads path; the sample server does not have it.
+
+### The fee budget
+
+Requiring the two Compute Budget instructions protects nothing on its own: a taker can set any price,
+and a SOL floor only says when the wallet is empty, not what one transaction may spend. The maker pays
+the fee whether the transaction succeeds or fails, so the validator bounds it before co-signing:
+
+- **Caps,** all in the maker's config, none with a built-in default: `max_cu_limit`,
+  `max_cu_price` (micro-lamports per CU), `max_fee_lamports` per transaction, a rolling
+  `max_fees_per_hour`, and `sol_floor`.
+- **Cost of one transaction,** computed from the message itself:
+  `signatures × lamports_per_signature + ceil(cu_limit × cu_price / 1,000,000)`. `signatures` is the
+  header's `num_required_signatures`, not the 2 or 3 the validator expects, so any extra signer is
+  priced (and then refused by the signer check). Precompile signatures cannot add to it, since the
+  precompile programs are not on the allowed list. `lamports_per_signature` comes from config
+  (5,000 today) and is refreshed in the background, never with an RPC call inside `/swap`.
+- **Arithmetic:** the product is computed in `u128` and every step is checked; an overflow, a
+  `cu_limit` above `max_cu_limit`, a `cu_price` above `max_cu_price`, or a total above
+  `max_fee_lamports` refuses the transaction with its reason. No path panics.
+- **Reservation,** under the same lock as the inventory reservation and before co-signing: the
+  transaction is refused unless `sol_balance − reserved_fees − fee >= sol_floor` and the hour's
+  spent plus reserved fees stay within `max_fees_per_hour`. Two concurrent `/swap`s therefore cannot
+  both pass against the same lamports.
+- **Release:** when the signature is finalized, the reservation becomes spent at the fee its metadata
+  reports, success or failure, and counts against the hour. When the signature is absent and the
+  finalized Clock is past `expire_at`, the reservation is released. After a restart, the hour's spend
+  is rebuilt from the wallet's finalized signatures, as for `max_fills_per_hour`; if it cannot be,
+  co-signing stays refused for 3,600 s of chain Clock.
+
+Tests for the prototype: a `cu_price` of `u64::MAX`; a limit and price whose product overflows `u64`;
+each cap exceeded by one; an extra required signature; a duplicate `SetComputeUnitPrice`; a
+`RequestHeapFrame`; a missing Compute Budget instruction; two concurrent reservations that fit the
+floor only one at a time; a failed transaction whose fee is kept as spent; and a restart whose hourly
+spend cannot be rebuilt.
 
 **Decoding:** `axum` and `base64`, the plan's dependencies, do not decode a versioned transaction.
 The prototype either parses it by hand or asks for one `solana-*` crate in its PR.
