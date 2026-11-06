@@ -370,3 +370,67 @@ quality: acceptable only because the service signs for its own taker (`docs/PLAN
 The published `metalbook-core`, `metalbook-sdk` and `pyth-lite` 0.1.0 decode the live accounts
 (`demo/tests/devnet_accounts.rs`). Strip marks equal `metalbook_maker::mark` exactly on 162 inputs
 (`demo/tests/marks.rs`), metalbook being on optfix 0.2.1 and `demo/` on 0.3.0.
+
+## Hosted demo maker (D3, 2026-11-06)
+
+`quotebook-demo-maker` under launchd (`scripts/demo-agent.sh install demo`), from
+[`PLAN-phase2.md`](PLAN-phase2.md), D3. It quotes the configured metalbook pairs for its own taker
+only, on `127.0.0.1:9000`. **Devnet only:** the install script refuses any RPC URL but the public
+devnet one. On mainnet a scheduled job never holds an admin key; this agent holds only the demo
+maker key's file path.
+
+### Accounts
+
+| Item | Value |
+| --- | --- |
+| Maker | `142GM9zKDbdncitgiL6zwdKquwuzzNhMPXwEm1RVYaVB` (`~/.config/solana/quotebook-demo/maker.json`) |
+| Payer | `EEGQJgeP96RSHZd97cX3p3HVivAGGKU4LSsQzR7TFVCY` (`~/.config/solana/quotebook-demo/payer.json`), 1 SOL from `77ie…CPPV` |
+| `MakerState` | `275ia4iQR4UUZgdcAHKkniZZiwAW2FVqcuC4BXNQUL7S` |
+| Delegate PDA | `4fixXvjy8Snf8ekYcMebinra4e5XqR5jpPfoBt96kxxM` |
+| USDC account (ATA) | `F7KjgYNYkFK1RLF81yZcfRKq1wEb9wCDDSSrVUPe8Co2`, allowance 4 USDC |
+| Long-token account (ATA, `AF3A…jH4x`, series 1) | `F1YY6EnJKLQxR3bwjGWMHrYCB2saZqMdTS7Ju4s91GTm`, allowance 2 |
+| Registry profile | `wss://localhost:9000`, name `quotebook demo (not reachable)`: a listing only, since the program requires `wss://` and the service speaks plain `ws://` |
+| Settings | `demo/config/devnet-maker.json`: TTL 30 s, 1 lot, half-spread 250 to 300 bps, guard 10%, 4 open quotes, 4 fills an hour, snapshot age 60 s, band 0 to 2 long tokens, 6 USDC notional, taker `3ZBj…sqLs` only |
+
+Both token accounts hold nothing until D5's funding, so every quote is refused with `RiskLimit`.
+
+### Transactions
+
+| Step | Signature |
+| --- | --- |
+| Fund the payer, 1 SOL | `5E4qkHA2B5TqGz9DPbtB9QSEfTBP5pWm3dKUFmT8wTYDLb4Nkyf4HGWJ6PJgzhLcQsTQLYLUHSgXNMqyvtz4GD8` |
+| `init_maker` | `5i3Uah2FRi5KdnsBfbH38E91GkRKSe85qAT8kTrJd1HPmanNAz4SWrP2GFKJAqDKRGgsUxQSJ2YaUVZFiRKDY7g6` |
+| USDC account | `5B4Hiqa36JqHE3iVvazQEAmoJn2iY2dfLegESoMxfALkMdWm2YCUmKgJxUfhjDsngdumrFMNoSc7vh63qB4xDxCR` |
+| Long-token account | `4wNrZrA4CN46HPaeTuCLoyVTHAF1htAFhTvWC7y4EboLeAV8rP1CMudstgjSKjv6RyPxYYuAc4YuWDfJrSUMnwsx` |
+| Approve 4 USDC | `4Lj8PgvnZq6rJZrdDkUNhToCib3obVwjaAthda1Z43mWSjhzB1DaP6xBabY8xTAgXCfEuWZ3aR2GU4k7ZLapjeE5` |
+| Approve 2 long tokens | `4Sq59rHLqh4LKdBrjf8hgtTd9Qfdt8Gbb2UvssQ1uLKDt4eybgfqLjfJr5HnnRpK82ffoLhXbjGeQ43XTk8fa5bR` |
+| `set_profile` | `3c4EMYHrwEZjtJyT132kbyXWmcKkSBw1HeAP8gcBq3En2zxpoaRS67YB1NCj4UrZtJu9jCDsarW56QCBrB6kQ7DG` |
+| Revoke drill 1: revoke USDC | `4QSdQzMFaV3m6MrGJzFJxn6bz1ZskQAL4LTJVEkd6MxHmFSENpbZY2w8jk8YfqcrC8GPMVKaK3CBPamHw3d3s5eh` |
+| Revoke drill 1: revoke long | `2e1fJT5z7t7cHxzQJgtL9x62ui49yoqsdQJpLPHv9ePbuhCUR3mwM6X5sZEDxB84L3cxidxse8oaVSV8y97JcYQo` |
+| Revoke drill 2: `cancel_all`, new minimum 1 | `5Kve2QYbSweNk4GHZrPdXW3LHDECoUKB9aZhCLNnKXNWfuKzZ224mcjDhc5d3ds6UX2UAxYna6Bo1buAUkmyVTpa` |
+| Revoke drill 2: revoke USDC | `28UuxuXrnq39uRE8wGii9jHRDt9zEo4gFDfjxGDL9qZ4TR3p9NYe2DZPAx7HzMt7xaP7mcjr9ZbDj3dCQ7cjQ3H6` |
+| Revoke drill 2: revoke long | `4x9HfehswRT7xcrqxnySXdhC8CZ1bvBvVPFbRd2dYna53fQw7fX3v9cbiNTLjmwqiuV7N4YAygf4ke7zJgWKxCZX` |
+| Approve 4 USDC again | `3tTEcsuicd2QHsthvwipGnSVQwUMzsrWicEgQbKpG3d6iCQeZiwgLRahdMrBpfCFzChzxiAeqftfd4spP4y65wk5` |
+| Approve 2 long tokens again | `3k7qHXiKhXjhkpiXGER7J85Q9TQQbQ27ELs44aBwAEsABcnr99yXFqHsoqcHvQtF6uh4hyJmhyt75tJpnDvbHEJK` |
+
+### Checks (2026-11-06, about 19:00 to 19:15Z, market open)
+
+- **Start:** the log's first lines are `resumed; quoting after the cold start on a finalized Clock`
+  (`started_at` 1793991874, longest TTL 60) and `serving`. `status` answered with a snapshot 3 to
+  6 s behind the service's clock and the XAG spot's age.
+- **After the cold start,** the taker `3ZBj…sqLs` was refused for a buy with `RiskLimit: inventory
+  band: max_short` (no long token held) and for a sell with `RiskLimit: funds: balance or
+  allowance` (no USDC). Those refusals come after the cold start, the fill-history rebuild and the
+  pricing in the book's order, so all three passed on live devnet data. Another taker got
+  `TakerNotAllowed`.
+- **`discover`** lists the profile: `1 listed, 0 invalid, 0 not allowed`.
+- **Halt:** `demo-agent.sh halt demo` drained at once (`newest_expires_at` null), and the next request
+  got `Halted`.
+- **Revoke:** drill 1 had no nonce to cancel (`next_nonce` 0 equals the window's base) and revoked
+  both allowances; drill 2 forced `cancel_all` with `QUOTEBOOK_DEMO_NEW_MIN=1`. Both were confirmed by
+  a finalized snapshot (`window_base` 1, `spl-token display` showing no delegation) and restarted the
+  agent halted; after the restart its `next_nonce` was 1.
+- **Crash restart:** `kill <PID>` was followed by a launchd restart 119 s after the previous start
+  (`ThrottleInterval` 120), with a new cold start.
+- **Left running** after the checks: `com.quotebook.demo-maker.demo`, approvals restored, no halt
+  file. It quotes nothing until D5 funds it.

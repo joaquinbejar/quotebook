@@ -16,15 +16,22 @@ pyth-lite = { workspace = true }
 quotebook-cli = { path = "../cli" }
 quotebook-core = { workspace = true }
 quotebook-maker = { path = "../maker", version = "0.2" }
+# D3: PDAs of the maker's state and delegate; in-repo, already a dependency of quotebook-cli.
+quotebook-sdk = { workspace = true }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 solana-account = { workspace = true }
-solana-address = { workspace = true, features = ["decode"] }
+solana-address = { workspace = true, features = ["curve25519", "decode"] }
+solana-keypair = { workspace = true }
+solana-signer = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+bytemuck = { workspace = true }
 solana-hash = { workspace = true }
 solana-signature = { workspace = true }
 solana-transaction = { workspace = true }

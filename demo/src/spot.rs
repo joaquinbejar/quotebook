@@ -142,6 +142,12 @@ impl SpotCell {
         })
     }
 
+    /// The last accepted value, however old: for reporting its age, never for pricing.
+    #[must_use]
+    pub const fn last(&self) -> Option<SpotPrice> {
+        self.last
+    }
+
     /// The value to price on at `now`, or `None`: no good update yet, the feed broken, older than
     /// [`MAX_SPOT_AGE_SECS`], or too far ahead of `now`.
     #[must_use]

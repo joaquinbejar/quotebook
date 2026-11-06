@@ -18,6 +18,14 @@ account.
 - `quotebook-demo` (`demo/`, not published): metalbook series priced with one optfix 0.3
   `price_strip` per expiry, spot from the Pyth push feeds over RPC, failing closed on age, market
   hours and the settlement window (`docs/PLAN-phase2.md`, D2).
+- `quotebook-demo-maker` (`demo/`, D3): the hosted demo maker on devnet, D1's multi-series service
+  over D2's marks on a loopback address, with a finalized RPC `ChainView` (one-slot snapshots with
+  account checks, the fill history walked page by page, failing closed), each spot's age in
+  `Status`, JSON log lines in a size-rotated file, and `status`, `drain`, `revoke` and `accounts`
+  commands; `scripts/demo-agent.sh` installs it under launchd and runs halt and revoke.
+- `quotebook-maker`: `client::request_status`.
+- `quotebook-cli`: `Rpc::finalized_accounts`, `finalized_signatures` and `finalized_transaction`,
+  with `Cluster` implementations.
 - Series fees (ADR 0001): `create_series` takes an optional `fee_bps` (at most
   `MAX_FEE_BPS` = 100), stored immutably in the series; the taker pays it, floor-rounded, into a
   Config-owned fee account; `withdraw_fees` (tag 8) moves collected fees out.
