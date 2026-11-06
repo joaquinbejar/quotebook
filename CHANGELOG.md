@@ -16,9 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MakerProfile` PDA `["profile", maker]`; `quotebook-taker discover` and `--discover` /
   `--allow` on `quote` and `settle`; `quotebook-admin set-profile` and `close-profile`.
 - `quotebook-maker`: the WebSocket client speaks TLS (`wss://`).
+- `quotebook-maker`: `MakerService::multi` serves several series under one key, with a risk book
+  (`risk`): one lock over limits, reservations and nonces; reservations released only by a
+  finalized snapshot; `max_open_quotes`, `max_notional`, an inventory band, `max_fills_per_hour`
+  (rebuilt from the chain after a restart), `allowed_takers` and a halt file; every failed or stale
+  read fails closed. A `status` request reports the service's state without taking a nonce. The
+  single-series constructor keeps its behaviour.
 
 ### Changed (breaking, for 0.2.0)
 
+- `quotebook-maker`: `RejectReason` gains `UnknownSeries`, `RiskLimit`, `RiskUnavailable`, `Halted`
+  and `TakerNotAllowed`; `ClientMessage` and `ServerMessage` gain `Status`; `ConfigError` gains
+  `NoMarkets`, `DuplicateSeries`, `MixedDeployments` and `Issuer`.
 - `quotebook-core`: `QuotebookError` gains `FeeTooHigh` (132), `InsufficientFees` (133) and
   `InvalidProfile` (134), and `ALL` has 35 entries; `Series._reserved` becomes `fee_bps` plus
   6 reserved bytes; `CreateSeriesArgs` gains `fee_bps` and `encode` returns

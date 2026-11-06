@@ -90,6 +90,7 @@ fn quote(
             signature: from_hex(&m.signature).unwrap().try_into().unwrap(),
         }),
         ServerMessage::Reject(r) => Err(r.reason),
+        ServerMessage::Status(_) => Err(RejectReason::Internal),
     }
 }
 

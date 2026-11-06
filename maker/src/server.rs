@@ -5,7 +5,9 @@
 use std::sync::{Arc, Mutex};
 
 use futures_util::{SinkExt, StreamExt};
-use quotebook_core::{BaseLots, Quote, QuoteTerms, Seconds, SeriesId, Side, UnixTimestamp};
+use quotebook_core::{
+    BaseLots, Nonce, NonceWindow, Quote, QuoteTerms, Seconds, SeriesId, Side, UnixTimestamp,
+};
 use rust_decimal::Decimal;
 use solana_address::Address;
 use tokio::net::{TcpListener, TcpStream};
@@ -17,13 +19,22 @@ use crate::market::MarketInfo;
 use crate::pricing::{self, PricingConfigError, PricingParams};
 use crate::protocol::{
     to_hex, ClientMessage, QuoteMessage, QuoteRequest, RejectMessage, RejectReason, ServerMessage,
-    TakerSide,
+    SpotAge, StatusMessage, TakerSide,
+};
+use crate::risk::{
+    Book, ChainError, ChainView, MarketLimits, Order, Refusal, RiskConfig, FILL_WINDOW_SECS,
 };
 
 /// The reference price, in quote tokens per base token.
 pub trait PriceFeed: Send + Sync {
     /// The current mid, or `None` if the feed is stale or down.
     fn mid(&self) -> Option<Decimal>;
+
+    /// Seconds since the reference price was published, for the status answer; `None` if the
+    /// feed does not report it.
+    fn age_secs(&self) -> Option<i64> {
+        None
+    }
 }
 
 /// The maker's position, in base tokens (positive when long).
@@ -112,15 +123,68 @@ pub enum ConfigError {
     /// The pricing settings fail a startup check.
     #[error("pricing: {0}")]
     Pricing(PricingConfigError),
+    /// A multi-series service needs at least one market.
+    #[error("no markets")]
+    NoMarkets,
+    /// Two markets name the same series.
+    #[error("duplicate series")]
+    DuplicateSeries,
+    /// All markets must be on one program and deployment.
+    #[error("markets on different programs or deployments")]
+    MixedDeployments,
+    /// The issuer could not be built.
+    #[error("issuer: {0}")]
+    Issuer(IssueError),
+}
+
+/// One market of a multi-series service.
+pub struct MarketEntry {
+    /// The market's settings.
+    pub config: ServiceConfig,
+    /// The market's limits.
+    pub limits: MarketLimits,
+    /// The market's reference price.
+    pub feed: Box<dyn PriceFeed>,
+    /// The maker's position in this market, for the pricing model.
+    pub inventory: Box<dyn Inventory>,
+}
+
+impl std::fmt::Debug for MarketEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MarketEntry")
+            .field("config", &self.config)
+            .field("limits", &self.limits)
+            .finish_non_exhaustive()
+    }
+}
+
+/// How a multi-series service starts its nonces.
+#[derive(Debug, Clone)]
+pub enum Start {
+    /// A maker key that has never signed a quote, from this nonce.
+    Fresh(Nonce),
+    /// Any restart: the maker's on-chain window, read at start, and when the service started.
+    /// The cold start uses the longest `max_quote_ttl` across the markets.
+    Resume {
+        /// `MakerState.nonces`.
+        window: Box<NonceWindow>,
+        /// Now.
+        started_at: UnixTimestamp,
+    },
 }
 
 /// The maker service.
 pub struct MakerService {
     key: MakerKey,
-    config: ServiceConfig,
-    issuer: Mutex<NonceIssuer>,
-    feed: Box<dyn PriceFeed>,
-    inventory: Box<dyn Inventory>,
+    /// The first market's settings.
+    first: ServiceConfig,
+    markets: Vec<MarketEntry>,
+    /// Limits, nonces and reservations move together, under this one lock.
+    book: Mutex<Book>,
+    /// `None` when the service has no risk book.
+    allowed_takers: Option<Vec<Address>>,
+    /// What a request for a series outside the set gets.
+    outside_set: RejectReason,
     clock: Box<dyn TimeSource>,
 }
 
@@ -128,9 +192,19 @@ impl std::fmt::Debug for MakerService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MakerService")
             .field("key", &self.key)
-            .field("config", &self.config)
+            .field("markets", &self.markets)
             .finish_non_exhaustive()
     }
+}
+
+fn validate(config: &ServiceConfig) -> Result<(), ConfigError> {
+    if config.ttl.get() <= 0 || config.ttl > config.market.max_quote_ttl {
+        return Err(ConfigError::Ttl);
+    }
+    if config.max_size < config.market.min_size {
+        return Err(ConfigError::Size);
+    }
+    config.pricing.validate().map_err(ConfigError::Pricing)
 }
 
 fn reject(request_id: u64, reason: RejectReason, message: impl Into<String>) -> ServerMessage {
@@ -157,20 +231,136 @@ impl MakerService {
         inventory: Box<dyn Inventory>,
         clock: Box<dyn TimeSource>,
     ) -> Result<Self, ConfigError> {
-        if config.ttl.get() <= 0 || config.ttl > config.market.max_quote_ttl {
-            return Err(ConfigError::Ttl);
-        }
-        if config.max_size < config.market.min_size {
-            return Err(ConfigError::Size);
-        }
-        config.pricing.validate().map_err(ConfigError::Pricing)?;
+        validate(&config)?;
         Ok(Self {
             key,
-            config,
-            issuer: Mutex::new(issuer),
-            feed,
-            inventory,
+            first: config,
+            markets: vec![MarketEntry {
+                config,
+                limits: MarketLimits::default(),
+                feed,
+                inventory,
+            }],
+            book: Mutex::new(Book::unchecked(issuer)),
+            allowed_takers: None,
+            outside_set: RejectReason::BadRequest,
             clock,
+        })
+    }
+
+    /// Builds a service for several series under one key, sharing one nonce issuer and one risk
+    /// book. It quotes nothing until [`MakerService::reconcile`] has applied a snapshot.
+    ///
+    /// # Errors
+    ///
+    /// `NoMarkets`, `DuplicateSeries`, `MixedDeployments`; a market's `Ttl`, `Size` or
+    /// `Pricing`; `Issuer` if the cold start overflows.
+    pub fn multi(
+        key: MakerKey,
+        markets: Vec<MarketEntry>,
+        start: Start,
+        risk: RiskConfig,
+        clock: Box<dyn TimeSource>,
+    ) -> Result<Self, ConfigError> {
+        let first_config = markets.first().ok_or(ConfigError::NoMarkets)?.config;
+        let first = first_config.market;
+        let mut longest_ttl = first.max_quote_ttl;
+        for (i, entry) in markets.iter().enumerate() {
+            validate(&entry.config)?;
+            let market = &entry.config.market;
+            if market.program_id != first.program_id || market.deployment != first.deployment {
+                return Err(ConfigError::MixedDeployments);
+            }
+            if markets
+                .iter()
+                .skip(i.saturating_add(1))
+                .any(|other| other.config.market.series == market.series)
+            {
+                return Err(ConfigError::DuplicateSeries);
+            }
+            longest_ttl = longest_ttl.max(market.max_quote_ttl);
+        }
+        let allowed_takers = risk.allowed_takers.clone();
+        let book = match start {
+            Start::Fresh(first_nonce) => Book::checked(NonceIssuer::fresh(first_nonce), risk, None),
+            Start::Resume { window, started_at } => {
+                let issuer = NonceIssuer::resume(&window, started_at, longest_ttl)
+                    .map_err(ConfigError::Issuer)?;
+                Book::checked(issuer, risk, Some(started_at))
+            }
+        };
+        Ok(Self {
+            key,
+            first: first_config,
+            markets,
+            book: Mutex::new(book),
+            allowed_takers: Some(allowed_takers),
+            outside_set: RejectReason::UnknownSeries,
+            clock,
+        })
+    }
+
+    /// Reads the chain and applies it to the risk book. The reads run outside the lock. Call it
+    /// on a timer; it blocks for as long as `view` does.
+    ///
+    /// # Errors
+    ///
+    /// A failed snapshot, after marking the book unavailable, or a poisoned lock. A failed
+    /// history read is not an error here: the book refuses until the hour has passed.
+    pub fn reconcile(&self, view: &dyn ChainView) -> Result<(), ChainError> {
+        let poisoned = || ChainError("book lock poisoned".into());
+        let snapshot = match view.snapshot() {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                self.book.lock().map_err(|_| poisoned())?.read_failed();
+                return Err(e);
+            }
+        };
+        let needs_history = self
+            .book
+            .lock()
+            .map_err(|_| poisoned())?
+            .needs_fill_history(snapshot.clock);
+        let history = if needs_history {
+            let since = snapshot.clock.get().saturating_sub(FILL_WINDOW_SECS);
+            let history = view.fill_times_since(UnixTimestamp::new(since));
+            if let Err(e) = &history {
+                tracing::warn!(error = %e, "fill history unreadable: refusing for the hour");
+            }
+            Some(history)
+        } else {
+            None
+        };
+        self.book
+            .lock()
+            .map_err(|_| poisoned())?
+            .apply(snapshot, history);
+        Ok(())
+    }
+
+    /// The service's state; takes no nonce and holds nothing.
+    #[must_use]
+    pub fn status(&self, request_id: u64) -> ServerMessage {
+        let Ok(book) = self.book.lock() else {
+            return reject(request_id, RejectReason::Internal, "book lock poisoned");
+        };
+        let status = book.status(self.clock.now());
+        drop(book);
+        ServerMessage::Status(StatusMessage {
+            request_id,
+            halted: status.halted,
+            open_quotes: status.open_quotes,
+            next_nonce: status.next_nonce,
+            newest_expires_at: status.newest_expires_at,
+            snapshot_age_secs: status.snapshot_age_secs,
+            spot_ages: self
+                .markets
+                .iter()
+                .map(|m| SpotAge {
+                    series: m.config.market.series.to_string(),
+                    age_secs: m.feed.age_secs(),
+                })
+                .collect(),
         })
     }
 
@@ -186,16 +376,22 @@ impl MakerService {
         window: &quotebook_core::NonceWindow,
         read_at: UnixTimestamp,
     ) -> Result<(), IssueError> {
-        self.issuer
+        self.book
             .lock()
             .map_err(|_| IssueError::Invalid)?
+            .issuer_mut()
             .refresh(window, read_at)
     }
 
-    /// The service's settings.
+    /// The first market's settings: the only market of a single-series service.
     #[must_use]
     pub fn config(&self) -> &ServiceConfig {
-        &self.config
+        &self.first
+    }
+
+    /// Every market's settings.
+    pub fn configs(&self) -> impl Iterator<Item = &ServiceConfig> {
+        self.markets.iter().map(|m| &m.config)
     }
 
     /// The maker's address.
@@ -208,32 +404,38 @@ impl MakerService {
     #[must_use]
     pub fn respond(&self, request: &QuoteRequest) -> ServerMessage {
         let id = request.request_id;
-        let market = &self.config.market;
         let Ok(series) = request.series.parse::<Address>() else {
             return reject(id, RejectReason::BadRequest, "series is not an address");
         };
-        if series != market.series {
-            return reject(id, RejectReason::BadRequest, "series not quoted here");
-        }
+        let Some(entry) = self
+            .markets
+            .iter()
+            .find(|m| m.config.market.series == series)
+        else {
+            return reject(id, self.outside_set, "series not quoted here");
+        };
+        let config = &entry.config;
+        let market = &config.market;
         let Ok(taker) = request.taker.parse::<Address>() else {
             return reject(id, RejectReason::BadRequest, "taker is not an address");
         };
+        if let Some(allowed) = &self.allowed_takers {
+            if !allowed.contains(&taker) {
+                return reject(id, RejectReason::TakerNotAllowed, "taker not allowed");
+            }
+        }
         let size = BaseLots::new(request.size_lots);
-        if size < market.min_size || size > self.config.max_size {
+        if size < market.min_size || size > config.max_size {
             return reject(id, RejectReason::Size, "size outside the quoted range");
         }
-        let Some(mid) = self.feed.mid() else {
+        let Some(mid) = entry.feed.mid() else {
             return reject(id, RejectReason::Pricing, "no reference price");
         };
         // Model, clamps in bps of the mid, rounding toward the maker (bid down, ask up), then
         // the guard on the rounded prices (crate::pricing). Both sides are judged, so a crossed
         // or too-coarse pair is refused whichever side is asked for.
-        let quoted = match pricing::quote(
-            mid,
-            self.inventory.inventory(),
-            &self.config.pricing,
-            market,
-        ) {
+        let quoted = match pricing::quote(mid, entry.inventory.inventory(), &config.pricing, market)
+        {
             Ok(q) => q,
             Err(e) => return reject(id, RejectReason::Pricing, e.to_string()),
         };
@@ -243,19 +445,57 @@ impl MakerService {
             TakerSide::Sell => (Side::Bid, quoted.bid_ticks),
         };
         let issued_at = self.clock.now();
-        let Some(expires_at) = issued_at.get().checked_add(self.config.ttl.get()) else {
+        let Some(expires_at) = issued_at.get().checked_add(config.ttl.get()) else {
             return reject(id, RejectReason::Internal, "clock overflow");
         };
         let expires_at = UnixTimestamp::new(expires_at);
-        let nonce = match self.issuer.lock() {
-            Ok(mut issuer) => match issuer.issue(issued_at, expires_at) {
+        // A fill exchanges `size × base_lot_size` for `price × size × quote_lot_size`, exact.
+        let lots = size.get();
+        let base_atoms = u128::from(lots).checked_mul(u128::from(market.base_lot_size));
+        let notional = u128::from(ticks.get())
+            .checked_mul(u128::from(lots))
+            .and_then(|v| v.checked_mul(u128::from(market.quote_lot_size)));
+        let (Some(Ok(base_atoms)), Some(Ok(notional))) =
+            (base_atoms.map(u64::try_from), notional.map(u64::try_from))
+        else {
+            return reject(id, RejectReason::Size, "fill does not fit an amount");
+        };
+        let (debit_account, debit_atoms) = match side {
+            Side::Ask => (config.maker_base, base_atoms),
+            Side::Bid => (config.maker_quote, notional),
+        };
+        let order = Order {
+            series,
+            side,
+            lots,
+            notional,
+            debit_account,
+            debit_atoms,
+            base_account: config.maker_base,
+            base_lot_size: market.base_lot_size,
+            limits: entry.limits,
+            issued_at,
+            expires_at,
+        };
+        // Halt, limits, reservation and nonce are one critical section. Signing is outside it.
+        let nonce = match self.book.lock() {
+            Ok(mut book) => match book.admit(&order) {
                 Ok(n) => n,
-                Err(e @ (IssueError::TooSoon { .. } | IssueError::ColdStart { .. })) => {
-                    return reject(id, RejectReason::RateLimited, e.to_string())
+                Err(refusal) => {
+                    let message = refusal.to_string();
+                    let reason = match refusal {
+                        Refusal::Halted => RejectReason::Halted,
+                        Refusal::Unavailable(_) => RejectReason::RiskUnavailable,
+                        Refusal::Limit(_) => RejectReason::RiskLimit,
+                        Refusal::Issue(
+                            IssueError::TooSoon { .. } | IssueError::ColdStart { .. },
+                        ) => RejectReason::RateLimited,
+                        Refusal::Issue(_) => RejectReason::Internal,
+                    };
+                    return reject(id, reason, message);
                 }
-                Err(e) => return reject(id, RejectReason::Internal, e.to_string()),
             },
-            Err(_) => return reject(id, RejectReason::Internal, "issuer lock poisoned"),
+            Err(_) => return reject(id, RejectReason::Internal, "book lock poisoned"),
         };
         let quote = match Quote::new(QuoteTerms {
             program_id: market.program_id,
@@ -271,7 +511,13 @@ impl MakerService {
             nonce,
         }) {
             Ok(q) => q,
-            Err(e) => return reject(id, RejectReason::Internal, e.to_string()),
+            Err(e) => {
+                // Nothing signed left the service, so this quote can never fill.
+                if let Ok(mut book) = self.book.lock() {
+                    book.forget(nonce);
+                }
+                return reject(id, RejectReason::Internal, e.to_string());
+            }
         };
         let signature = self.key.sign(&quote);
         tracing::info!(
@@ -287,8 +533,8 @@ impl MakerService {
             request_id: id,
             quote: to_hex(&quote.encode()),
             signature: to_hex(&signature),
-            maker_base: self.config.maker_base.to_string(),
-            maker_quote: self.config.maker_quote.to_string(),
+            maker_base: config.maker_base.to_string(),
+            maker_quote: config.maker_quote.to_string(),
         })
     }
 
@@ -319,6 +565,7 @@ impl MakerService {
             };
             let answer = match serde_json::from_str::<ClientMessage>(&text) {
                 Ok(ClientMessage::QuoteRequest(request)) => self.respond(&request),
+                Ok(ClientMessage::Status(request)) => self.status(request.request_id),
                 Err(e) => reject(0, RejectReason::BadRequest, e.to_string()),
             };
             let json = serde_json::to_string(&answer).unwrap_or_default();

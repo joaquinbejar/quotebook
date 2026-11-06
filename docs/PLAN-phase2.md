@@ -1,6 +1,6 @@
 # quotebook: phase 2 plan (devnet operations)
 
-Status: **draft r5**, for Codex review. Brief from SOLANA-PROJECTS, msg 51619 (2026-11-03);
+Status: **approved** (Codex, msg 55429, at `d35979b`; merged in #40). Brief from SOLANA-PROJECTS, msg 51619 (2026-11-03);
 decisions from msgs 51662, 53465 and 53489 and metalbook's facts from msg 52647 are folded in
 (see "Decisions"). No item is open: the spot source is decided and its sample passed ("Spot
 source").

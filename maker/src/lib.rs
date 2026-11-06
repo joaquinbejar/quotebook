@@ -11,6 +11,9 @@
 //! window and refuses to quote for `max_quote_ttl + MAX_CLOCK_SKEW` (70 s at 60 s + 10 s), so
 //! no new nonce can evict a still-valid quote signed before the restart.
 //!
+//! [`server::MakerService::multi`] serves several series under one key, with a risk book
+//! ([`risk`]) holding what every signed quote could take until it can no longer fill.
+//!
 //! Not in v1: a Pyth Hermes price feed and live inventory from chain (both behind the
 //! [`server::PriceFeed`] and [`server::Inventory`] traits), and persisting the issuer, which
 //! would remove the cold-start delay.
@@ -21,4 +24,5 @@ pub mod keys;
 pub mod market;
 pub mod pricing;
 pub mod protocol;
+pub mod risk;
 pub mod server;
