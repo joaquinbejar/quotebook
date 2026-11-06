@@ -1,5 +1,5 @@
 [workspace]
-members = ["quotebook-core", "program", "sdk", "maker", "cli", "lint-control", "test-programs/probe"]
+members = ["quotebook-core", "program", "sdk", "maker", "cli", "demo", "lint-control", "test-programs/probe"]
 # The libFuzzer targets are their own workspace on a pinned nightly (fuzz/rust-toolchain.toml).
 exclude = ["fuzz"]
 resolver = "2"
@@ -32,6 +32,12 @@ serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 solana-signature = { version = "3.5", features = ["verify"] }
+# The demo maker (demo/, docs/PLAN-phase2.md, D2), checked on crates.io 2026-11-03. Only demo/
+# uses these.
+optfix = "0.3"
+metalbook-core = "0.1"
+metalbook-sdk = "0.1"
+pyth-lite = "0.1"
 # CLI only, never core or the program. 4.4.0 is the latest stable but pulls the agave 4.4
 # crates LiteSVM 0.18.1 does not build with; 4.3.2 is the newest that resolves with the
 # LiteSVM pins (checked 2026-10-29). `~4.3`, not the caret `4.3`, so `cargo update` cannot move
