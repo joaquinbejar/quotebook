@@ -2226,7 +2226,7 @@ dependencies = [
 
 [[package]]
 name = "lint-control"
-version = "0.1.1"
+version = "0.2.0"
 
 [[package]]
 name = "linux-raw-sys"
@@ -2887,7 +2887,7 @@ dependencies = [
 
 [[package]]
 name = "quotebook-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "futures-util",
  "litesvm",
@@ -2918,7 +2918,7 @@ dependencies = [
 
 [[package]]
 name = "quotebook-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "proptest",
@@ -2927,7 +2927,7 @@ dependencies = [
 
 [[package]]
 name = "quotebook-demo"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "metalbook-core",
  "metalbook-sdk",
@@ -2950,7 +2950,7 @@ dependencies = [
 
 [[package]]
 name = "quotebook-maker"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "futures-util",
  "litesvm",
@@ -2979,14 +2979,14 @@ dependencies = [
 
 [[package]]
 name = "quotebook-probe"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "pinocchio",
 ]
 
 [[package]]
 name = "quotebook-program"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "litesvm",
@@ -3008,7 +3008,7 @@ dependencies = [
 
 [[package]]
 name = "quotebook-sdk"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "litesvm",

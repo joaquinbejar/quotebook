@@ -1,6 +1,6 @@
 {
   "name": "@quotebook/sdk",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "TypeScript SDK for quotebook, request-for-quote trading on Solana: quotes, the ed25519 precompile, settle, PDAs, account and fill-event decoders",
   "license": "MIT",
   "private": true,
