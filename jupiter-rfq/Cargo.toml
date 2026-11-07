@@ -1,0 +1,36 @@
+[package]
+name = "jupiter-rfq"
+description = "Off-chain prototype of a Jupiter RFQ V1 webhook over quotebook's pricing: it validates fills and never signs or sends"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# Canned answers for the magic request ids of Jupiter's offline acceptance suite
+# (docs/design/jupiter-rfq.md, "The acceptance suite"). Off by default; it signs nothing either.
+acceptance = []
+
+[dependencies]
+axum = { workspace = true }
+base64 = { workspace = true }
+quotebook-maker = { path = "../maker", version = "0.2" }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+solana-address = { workspace = true, features = ["decode"] }
+solana-signature = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+solana-keypair = { workspace = true }
+solana-signer = { workspace = true }
+tower = { workspace = true }
+
+[lints]
+workspace = true

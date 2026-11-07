@@ -1,0 +1,38 @@
+{
+  "_source": "https://github.com/jup-ag/rfq-webhook-toolkit/blob/3aa4fce515d4b5827ee2d48f08041ea706d911cd/tests/suites/acceptance/test.ts",
+  "quote_exact_in": {
+    "amount": "1000000",
+    "feeBps": 2,
+    "protocol": "v1",
+    "quoteId": "59db3e19-c7b0-4753-a8aa-206701004498",
+    "quoteType": "exactIn",
+    "requestId": "629bddf3-0038-43a6-8956-f5433d6b1191",
+    "suggestedPrioritizationFees": 10000,
+    "taker": "5v2Vd71VoJ1wZhz1PkhTY48mrJwS6wF4LfvDbYPnJ3bc",
+    "tokenIn": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "tokenOut": "So11111111111111111111111111111111111111112"
+  },
+  "quote_unsupported": {
+    "amount": "1000000",
+    "feeBps": 2,
+    "protocol": "v1",
+    "quoteId": "59db3e19-c7b0-4753-a8aa-206701004498",
+    "quoteType": "exactIn",
+    "requestId": "629bddf3-0038-43a6-8956-f5433d6b1191",
+    "suggestedPrioritizationFees": 10000,
+    "taker": "5v2Vd71VoJ1wZhz1PkhTY48mrJwS6wF4LfvDbYPnJ3bc",
+    "tokenIn": "So11111111111111111111111111111111111111112",
+    "tokenOut": "fake3KUxqvJ5erXobKTYFtL2BpTgGzy7B9AcRcXeCwWvFM"
+  },
+  "swap": {
+    "quoteId": "59db3e19-c7b0-4753-a8aa-206701004498",
+    "requestId": "629bddf3-0038-43a6-8956-f5433d6b1191",
+    "transaction": "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAIABw1+jAiHYL/eHd3PMsF/IJuCQu5SqvEx+s2I0OosbQsG8kjAG1BZAFRV2dywxrzs3LT7Wy6rwamoK1c5K6qkDwTmwoAL86DDaPJrpECH4O7FIcjNK8aXLr8U+vEPOkKqMIbT6oz1rKyozQUgdRIXXEPO9Upd2Z7eIKFrVSU3OPOX3N7E3kRk8Ll8XsOf5Ir4ISzHf+0ZUtqBSXSNVE5iS+sA4iF2IlhNfbkvqPIGGddbql5WIVIAOvUkFwCrBoXw04EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMGRm/lIRcy/+ytunLDm+e8jOW7xfcSayxDmzpAAAAABHnZx8wQNd5yEfmetIwJ1wsr31vfni5WuKH7taLqMycG3fbh12Whk9nL4UbO63msHLSF7V9bN5E6jPWFfv8AqUpYSftyo7vpH9xbDmpX9jxaHLRbIGem7Qys02OVyKECjJclj04kifG7PRApFI4NgwtaE5na/xCEBI572Nvp+FnG+nrzvtutOj1l82qryXQxsbvkwtL24OR8pgIDRS9dYSdenhhyIvZ+yaOk0Giv3sQzHPEybygyONx7iDX7IHF2BAcACQMK0gAAAAAAAAcABQIdmAAACwYBBAEMBgkBAQoLAQACBQQDCAkMCQYjqGC3o1wKKKAAypo7AAAAAJgWfQEAAAAAaiqpZwAAAAAKAAAA"
+  },
+  "swap_rejected_with_reason": {
+    "quoteId": "59db3e19-c7b0-4753-a8aa-206701004498",
+    "state": {
+      "rejectedWithReason": "insufficientBalance"
+    }
+  }
+}
