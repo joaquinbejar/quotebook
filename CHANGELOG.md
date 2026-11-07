@@ -21,6 +21,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after the reopening), `risk-unavailable`, `halted`, `writer-cap`, `no-series`, `fill-error` and
   `rpc`. Each alert is one line in `--alerts-log` and runs `QUOTEBOOK_WATCH_ALERT_CMD` if set, and
   comes back after 3,600 s while active; the JSON lines and the alert log rotate at 10 MB, 5 kept. `scripts/demo-watch-agent.sh` installs it under launchd.
+- `quotebook-demo-roll` (`demo/`, D5): the demo maker's writer cycle on devnet. One run pairs each
+  tradable expiry of the 1 oz XAG capped calls at the strike nearest spot, creates its quotebook
+  series (the devnet admin's only signature), mints up to the band, the unlocked USDC and the writer
+  cap, approves the delegate, and after settlement claims, redeems and revokes; the mints,
+  approvals, claims, redeems and revokes run only between a halt and drain and a finalized
+  confirmation, planned again after the drain. `plan` is the dry run. `scripts/demo-roll.sh` runs it
+  under launchd every 6 hours with a lock, rewrites the pairs and restarts the maker and the
+  watcher; a failed cycle leaves the halt file.
+- `quotebook-demo-taker` (`demo/`, D5): one 1 lot fill against the demo maker per run, checked as
+  `quotebook-taker` checks it, sides chosen to keep the inventory flat, one line per run in
+  `trades.jsonl` (D4's contract plus the fill, read at `finalized`); it skips outside market hours,
+  in the settlement window, while halted and with no inventory. `--dry-run` requests no quote.
+  `scripts/demo-taker-agent.sh` runs it under launchd every 6 hours.
+- `quotebook-demo`: `cycle` (the cycle's finalized view, plan and runner) and `taker`;
+  `writer_cap::read_positions`, `exposure_of` and `Exposure::room`.
+- `quotebook-cli`: `admin::create_associated_account`, the Associated Token Account program's
+  `CreateIdempotent`.
 - `quotebook-demo`: `writer_cap`, the cap on contracts written (2 contracts, 10.40 USDC committed)
   read from every metalbook `Writer` position at `finalized`, failing closed; and
   `schedule::closure_at`, `last_closure_before` and `utc_iso`.

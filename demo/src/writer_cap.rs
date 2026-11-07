@@ -60,6 +60,21 @@ impl Exposure {
         )
     }
 
+    /// How many more contracts, each locking `max_payout` atoms, stay within the cap: 0 when none
+    /// does, or when `max_payout` is 0 (a series that cannot be judged writes nothing).
+    #[must_use]
+    pub fn room(&self, max_payout: u64) -> u64 {
+        if max_payout == 0 {
+            return 0;
+        }
+        let by_count = MAX_WRITTEN_CONTRACTS.saturating_sub(self.contracts);
+        let by_collateral = MAX_COMMITTED_COLLATERAL
+            .saturating_sub(self.committed)
+            .checked_div(max_payout)
+            .unwrap_or(0);
+        by_count.min(by_collateral)
+    }
+
     /// Whether any contract at all fits: the cap's count and collateral both have room.
     #[must_use]
     pub const fn has_room(&self) -> bool {
@@ -69,6 +84,98 @@ impl Exposure {
 
 fn rpc(what: impl Into<String>) -> CliError {
     CliError::Rpc(what.into())
+}
+
+/// One metalbook `Writer` position of the owner, as read at `finalized`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Position {
+    /// The position account.
+    pub address: Address,
+    /// Its series.
+    pub series: Address,
+    /// Contracts written and not closed.
+    pub written: u64,
+    /// Whether `claim_writer` has run on it.
+    pub claimed: bool,
+}
+
+impl Position {
+    /// Whether it still commits collateral: written and not claimed.
+    #[must_use]
+    pub const fn open(&self) -> bool {
+        !self.claimed && self.written > 0
+    }
+}
+
+/// Reads every `Writer` position of `owner` on the metalbook program, at `finalized`.
+///
+/// # Errors
+///
+/// `Rpc` on a failed read, a position that does not decode or one of another owner.
+pub fn read_positions(
+    rpc_client: &mut dyn Rpc,
+    metalbook_program: &Address,
+    owner: &Address,
+) -> Result<Vec<Position>, CliError> {
+    let found = rpc_client.finalized_program_accounts(
+        metalbook_program,
+        WRITER_LEN,
+        &[
+            (0, vec![AccountTag::Writer as u8]),
+            (WRITER_OWNER_OFFSET, owner.as_ref().to_vec()),
+        ],
+    )?;
+    let mut positions = Vec::with_capacity(found.len());
+    for (address, account) in &found {
+        let position = decode::position(metalbook_program, &account.owner, &account.data)
+            .map_err(|e| rpc(format!("writer {address}: {e:?}")))?;
+        if Address::new_from_array(position.owner) != *owner {
+            return Err(rpc(format!("writer {address} of another owner")));
+        }
+        positions.push(Position {
+            address: *address,
+            series: Address::new_from_array(position.series),
+            written: position.written,
+            claimed: position.claimed != 0,
+        });
+    }
+    Ok(positions)
+}
+
+/// The exposure of `positions`, given each open position's series and its maximum payout per
+/// contract.
+///
+/// # Errors
+///
+/// `Rpc` when an open position's series has no payout in `payouts`, or on an overflow.
+pub fn exposure_of(
+    positions: &[Position],
+    payouts: &[(Address, u64)],
+) -> Result<Exposure, CliError> {
+    let mut exposure = Exposure {
+        positions: positions.len(),
+        ..Exposure::default()
+    };
+    for p in positions.iter().filter(|p| p.open()) {
+        let payout = payouts
+            .iter()
+            .find(|(a, _)| *a == p.series)
+            .map(|(_, payout)| *payout)
+            .ok_or_else(|| rpc(format!("series {} not read", p.series)))?;
+        let committed = p
+            .written
+            .checked_mul(payout)
+            .ok_or_else(|| rpc("committed collateral overflows"))?;
+        exposure.contracts = exposure
+            .contracts
+            .checked_add(p.written)
+            .ok_or_else(|| rpc("written contracts overflow"))?;
+        exposure.committed = exposure
+            .committed
+            .checked_add(committed)
+            .ok_or_else(|| rpc("committed collateral overflows"))?;
+    }
+    Ok(exposure)
 }
 
 /// Reads the exposure of `owner` on the metalbook program, at `finalized`.
@@ -82,26 +189,12 @@ pub fn read_exposure(
     metalbook_program: &Address,
     owner: &Address,
 ) -> Result<Exposure, CliError> {
-    let found = rpc_client.finalized_program_accounts(
-        metalbook_program,
-        WRITER_LEN,
-        &[
-            (0, vec![AccountTag::Writer as u8]),
-            (WRITER_OWNER_OFFSET, owner.as_ref().to_vec()),
-        ],
-    )?;
-    let mut open: Vec<(Address, u64)> = Vec::new();
-    for (address, account) in &found {
-        let position = decode::position(metalbook_program, &account.owner, &account.data)
-            .map_err(|e| rpc(format!("writer {address}: {e:?}")))?;
-        if Address::new_from_array(position.owner) != *owner {
-            return Err(rpc(format!("writer {address} of another owner")));
-        }
-        if position.claimed == 0 && position.written > 0 {
-            open.push((Address::new_from_array(position.series), position.written));
-        }
-    }
-    let mut series: Vec<Address> = open.iter().map(|(s, _)| *s).collect();
+    let positions = read_positions(rpc_client, metalbook_program, owner)?;
+    let mut series: Vec<Address> = positions
+        .iter()
+        .filter(|p| p.open())
+        .map(|p| p.series)
+        .collect();
     series.sort_unstable();
     series.dedup();
     let mut payouts: Vec<(Address, u64)> = Vec::with_capacity(series.len());
@@ -123,27 +216,5 @@ pub fn read_exposure(
             payouts.push((*address, payout.get()));
         }
     }
-    let mut exposure = Exposure {
-        positions: found.len(),
-        ..Exposure::default()
-    };
-    for (s, written) in open {
-        let payout = payouts
-            .iter()
-            .find(|(a, _)| *a == s)
-            .map(|(_, p)| *p)
-            .ok_or_else(|| rpc(format!("series {s} not read")))?;
-        let committed = written
-            .checked_mul(payout)
-            .ok_or_else(|| rpc("committed collateral overflows"))?;
-        exposure.contracts = exposure
-            .contracts
-            .checked_add(written)
-            .ok_or_else(|| rpc("written contracts overflow"))?;
-        exposure.committed = exposure
-            .committed
-            .checked_add(committed)
-            .ok_or_else(|| rpc("committed collateral overflows"))?;
-    }
-    Ok(exposure)
+    exposure_of(&positions, &payouts)
 }

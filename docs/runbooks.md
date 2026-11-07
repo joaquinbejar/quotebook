@@ -211,8 +211,9 @@ last `failed` line of `$DIR/maker.jsonl`. A start fails on a missing `MakerState
 of the wrong mint or owner, or an unreadable configuration; fix it, then `install` again. To stop
 the loop first, `uninstall`.
 
-**Scheduled jobs and keys:** this agent holds only the demo maker key's file path. D5's roll job is
-the one that will hold the devnet admin key's path; a scheduled job never holds a mainnet admin key.
+**Scheduled jobs and keys:** this agent holds only the demo maker key's file path. D5's roll job
+(section 9) is the one that holds the devnet admin key's path; a scheduled job never holds a
+mainnet admin key.
 
 ## 8. Demo watcher on devnet (D4)
 
@@ -267,3 +268,79 @@ window starts keeps firing, and a holiday alerts.
 
 **Logs:** `watch.jsonl`, `watch-log.jsonl` and `alerts.log` rotate at 10 MB and keep 5 old
 files each.
+
+## 9. Writer cycle and demo taker on devnet (D5)
+
+`quotebook-demo-roll` under `scripts/demo-roll.sh` and `quotebook-demo-taker` under
+`scripts/demo-taker-agent.sh` ([`PLAN-phase2.md`](PLAN-phase2.md), D5). Both refuse any cluster
+whose genesis is not devnet's and use the directory of the maker agent (section 7).
+
+**The admin key in a scheduled job is devnet only.** The roll job holds the path of the quotebook
+admin keypair `GZhm…tVnL` (`~/.config/solana/quotebook-devnet/admin.json`), which signs only
+`create_series`, logged to `$DIR/roll.log`. Its plist is dedicated to this job and holds file paths
+only, no key material. **This is not allowed on mainnet:** a scheduled job never holds a mainnet
+admin key.
+
+```sh
+cargo build --release -p quotebook-demo
+DIR=~/.local/share/quotebook-demo/demo        # shared with the maker and the watcher
+```
+
+**What one cycle does** (`scripts/demo-roll.sh run demo`), idempotent, only what is missing:
+1. one pair per tradable expiry of the 1 oz XAG capped calls, the strike nearest a fresh spot
+   (without a fresh spot, for example on a weekend, a new expiry waits for the next run); a pair
+   already configured keeps its strike;
+2. its quotebook series if there is none (`base_lot` 1, `quote_lot` 10,000, `fee_bps` 0), signed by
+   the admin and confirmed at `finalized`, with no halt;
+3. mints up to the band (2 long tokens held), the unlocked USDC and the writer cap (2 contracts,
+   10.40 USDC committed, over every series and expiry, read at `finalized`);
+4. the delegate approvals: 2 long tokens on each pair's long-token account, 4 USDC on the USDC
+   account, when an account changes or an allowance is under 20%;
+5. after settlement: `claim_writer` on each settled or voided position, `redeem` of the maker's
+   own long tokens of a settled series and a token `Revoke` on its account; a pair with nothing left
+   leaves the configuration.
+
+Steps 3 to 5 run only **between a halt and drain and a finalized confirmation**: the run creates
+`$DIR/HALT`, waits until a finalized Clock passes every quote the service signed, plans again from
+a finalized read (fills during the drain change balances), sends, and waits until a finalized read
+shows each effect. When the pairs changed it rewrites `$DIR/devnet.json` (the old one in
+`devnet.json.prev`) and restarts the maker and the watcher. Then it removes the halt file it
+created; the maker quotes again after its cold start (70 s). A cycle with nothing in steps 3 to 5
+does not halt.
+
+**The cap:** capacity comes back only when a `close` or `claim_writer` is finalized. A cycle that
+claims frees nothing in the same run: the next run, 6 hours later, can mint again. With 2 contracts
+open on Nov 13, Nov 20 writes nothing until Nov 13's claim is finalized, and the maker may have
+nothing to sell for a few days; the taker logs `no inventory`.
+
+**Dry run first:** `QUOTEBOOK_ROLL_DRY_RUN=1 scripts/demo-roll.sh run demo` makes every read and
+prints the plan (`steps`, `pairs`, `notes`, and `needs_halt`), with no key loaded and nothing sent.
+
+**Start:** `scripts/demo-roll.sh install demo`, then the first run by hand: `scripts/demo-roll.sh
+run demo`. The agent runs every 6 hours (`StartInterval` 21600), not at load. One cycle at a time:
+`$DIR/roll.lock` holds the PID of the running one; a lock whose PID is gone is taken over.
+
+**A failed cycle** prints its JSON with `error` and what it sent, exits 1, and **leaves
+`$DIR/HALT`**: the maker stays halted and the watcher alerts `halted`. Read the last line of
+`$DIR/roll.log` and `$DIR/roll-log.jsonl` and check the sent signatures at `finalized`. Then
+remove `$DIR/HALT` by hand and, if the cycle should run again, run it: it refuses within 120 s of
+its last send, so a transaction still landing is seen first. A cycle never removes a halt file it
+did not create, and **a halt file already present stops it** before anything in steps 3 to 5: an
+incident, or a revoke (section 7) whose approvals must not come back on their own.
+
+**Stop:** `scripts/demo-roll.sh uninstall demo`. A running cycle is stopped by `kill <PID>` (from
+`status`); its halt file, if any, stays. Never `pkill`.
+
+**Demo taker:** `scripts/demo-taker-agent.sh install demo` runs one taker run every 6 hours
+(`StartInterval` 21600), not at load; `scripts/demo-taker-agent.sh run demo` runs one by hand, and
+`QUOTEBOOK_TAKER_DRY_RUN=1` makes it read and decide only, with no quote requested. The taker is
+`3ZBj…sqLs` (`~/.config/solana/quotebook-devnet/taker.json`, a file path in the plist) and pays its
+own fees. Each run buys 1 lot from the maker, or sells back what it holds, and appends one line to
+`$DIR/trades.jsonl`: `time`, `outcome` (`filled`, `skipped` or `failed`), `reason`, and for a trade
+the series, side, price, size, quote amount, fee, signature, slot, CU, network fee and both sides'
+balances before and after, read at `finalized`. It skips outside market hours, inside the
+settlement window, while `$DIR/HALT` exists, and with nothing to sell on either side (`no
+inventory`). A `failed` line raises the watcher's `fill-error`.
+
+**After expiry:** the taker's own long tokens are redeemed through metalbook's flow and recorded in
+metalbook's devnet log, as in I9; the roll redeems only the maker's.

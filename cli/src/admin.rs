@@ -141,6 +141,36 @@ pub fn revoke(
     send(rpc, &[ix], payer, &[maker])
 }
 
+/// The Associated Token Account program's `CreateIdempotent` (tag 1): creates the associated
+/// token account of `owner` for `mint` under `token_program` if it does not exist, paid by
+/// `payer`, and does nothing if it does.
+#[must_use]
+pub fn create_associated_account(
+    payer: &Address,
+    owner: &Address,
+    mint: &Address,
+    token_program: &Address,
+) -> solana_instruction::Instruction {
+    use solana_instruction::{AccountMeta, Instruction};
+    let account = Address::find_program_address(
+        &[owner.as_ref(), token_program.as_ref(), mint.as_ref()],
+        &pda::ASSOCIATED_TOKEN_PROGRAM,
+    )
+    .0;
+    Instruction::new_with_bytes(
+        pda::ASSOCIATED_TOKEN_PROGRAM,
+        &[1],
+        vec![
+            AccountMeta::new(*payer, true),
+            AccountMeta::new(account, false),
+            AccountMeta::new_readonly(*owner, false),
+            AccountMeta::new_readonly(*mint, false),
+            AccountMeta::new_readonly(solana_sdk_ids::system_program::ID, false),
+            AccountMeta::new_readonly(*token_program, false),
+        ],
+    )
+}
+
 /// `cancel_all`: every nonce of `maker` below `new_min` stops being fillable.
 ///
 /// # Errors

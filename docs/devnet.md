@@ -482,3 +482,54 @@ Two passes by hand from the branch, against public devnet and the running maker,
   message) to the rotated alert log. No line carried the RPC URL.
 
 The agent is not installed yet; it will be installed after the D4 merge.
+
+## Writer cycle and demo taker (D5, prepared 2026-11-07)
+
+`quotebook-demo-roll` (`scripts/demo-roll.sh`) and `quotebook-demo-taker`
+(`scripts/demo-taker-agent.sh`), from [`PLAN-phase2.md`](PLAN-phase2.md), D5 (runbook section 9).
+The demo maker `142G…VYaVB` is the writer: it locks its own devnet USDC in metalbook and sells the
+long tokens through quotebook, and the I9 taker `3ZBj…sqLs` buys and sells them back. Both refuse
+any cluster whose genesis is not devnet's.
+
+**The admin key in a scheduled job is devnet only.** The roll job holds the path of the quotebook
+admin keypair `GZhm…tVnL`, which signs only `create_series`, logged to `roll.log`; its plist is
+dedicated to the job and holds file paths only. **This is not allowed on mainnet:** a scheduled job
+never holds a mainnet admin key.
+
+### Funding
+
+| Item | Value |
+| --- | --- |
+| Transfer | 14.00 USDC from metalbook's `7tVP…cACQ` to the maker's USDC account `F7KjgYNYkFK1RLF81yZcfRKq1wEb9wCDDSSrVUPe8Co2`, signed by metalbook (2026-11-07, about 09:04Z) |
+| Signature | `uQAmw5xnP8Atc4aA29HS3bsF8XXmBemnENznW2gXsvBWCWrAaXYaY6q4EGvQ5r4tWFTmAFdJkGnAkW5zRDZxnvW`, slot 519,608,843 |
+| Check | 14 USDC at `finalized` in that account, allowance 4 USDC to the delegate PDA |
+
+### Limits
+
+| Limit | Value | Where |
+| --- | --- | --- |
+| Contracts written and not claimed, every series and expiry | 2 | `writer_cap`, from the chain at `finalized` |
+| Collateral committed | 10.40 USDC | the same |
+| Long tokens held per series (the band) | 0 to 2 | `market_limits.max_long` |
+| Delegate allowances | 2 long tokens per series, 4 USDC | the approvals the cycle sets |
+| Lots per trade | 1 | the taker |
+| Fills per hour | 4 | the maker's `max_fills_per_hour` |
+| Takers | `3ZBj…sqLs` only | the maker's `allowed_takers` |
+
+### Dry runs (2026-11-07, about 12:02 to 12:08Z, Saturday, market closed)
+
+Read only, from the branch, against public devnet and the running maker, with nothing sent:
+- **Roll plan:** finalized slot 519,653,441. Five 1 oz XAG capped calls for Nov 13 21:00Z are
+  eligible (strikes 48 to 52, collateral 4.80 to 5.20 USDC each); no spot, since the feed is inside
+  the weekend closure, which only matters for an expiry without a pair. The plan keeps the
+  configured pair, series 1 (`B66M…Zx21`, strike 50) on `AbfhiX…SCAf`, and has one step: mint 2
+  contracts (10.00 USDC locked, 4.00 USDC left to buy back), which needs the halt. The writer's
+  positions read 0 contracts and 0 committed; both approvals are already at their amounts.
+- **Taker:** the decision is `skip: market closed`. Balances at `finalized`: the taker 8.77 USDC
+  and 1 long token of series 1 (from I9), the maker 14 USDC and no long token; the taker holds
+  1,999,970,000 lamports for its fees. The maker's `Status` answered (not halted), no quote was
+  requested and no line was written.
+
+The first cycle and the first trade, with their signatures and checks, will be recorded here after
+the D5 merge. After that, a weekly docs PR summarizes `trades.jsonl` (count, volume, failures and
+their reasons, CU) without listing every signature.
