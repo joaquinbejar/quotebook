@@ -25,8 +25,9 @@ use quotebook_demo::config::DemoConfig;
 use quotebook_demo::host::associated_token_account;
 use quotebook_demo::logging::RotatingFile;
 use quotebook_demo::watch::{
-    deliver, judge_spot, last_taker_run, listing_expected, pass, Alert, AlertBook, Limits, LineOut,
-    Pass, SpotVerdict, StatusSource, TakerOutcome, WatchState, Watched, REALERT_SECS,
+    alert_log_line, deliver, judge_spot, last_taker_run, listing_expected, log_alert, pass, Alert,
+    AlertBook, Limits, LineOut, Pass, SpotVerdict, StatusSource, TakerOutcome, WatchState, Watched,
+    REALERT_SECS,
 };
 use quotebook_demo::writer_cap::{read_exposure, Exposure};
 use quotebook_maker::protocol::{from_hex, StatusMessage};
@@ -856,4 +857,32 @@ fn the_output_rotates_by_size_without_splitting_a_line() {
         !dir.join("watch.jsonl.3").exists(),
         "only 2 old files are kept"
     );
+}
+
+#[test]
+fn the_alert_log_is_one_line_per_alert_and_rotates() {
+    let x = Alert {
+        kind: "maker-down",
+        scope: "maker".into(),
+        subject: "142G".into(),
+        message: "no answer\nforged line\r".into(),
+    };
+    // 2026-11-13T21:05:09Z.
+    assert_eq!(
+        alert_log_line(&x, 1_794_603_909),
+        "2026-11-13T21:05:09Z maker-down 142G no answer forged line \n"
+    );
+    let dir = scratch("alert-log");
+    let path = dir.join("alerts.log");
+    let line_len = u64::try_from(alert_log_line(&x, 1_794_603_909).len()).unwrap();
+    let mut log = RotatingFile::open(&path, line_len * 2, 2).unwrap();
+    for i in 0..7 {
+        assert!(log_alert(&mut log, &x, 1_794_603_909 + i));
+    }
+    let lines = |p: &std::path::Path| std::fs::read_to_string(p).unwrap().lines().count();
+    // Two lines a file, two old files kept: the oldest are dropped, no line is split.
+    assert_eq!(lines(&path), 1);
+    assert_eq!(lines(&dir.join("alerts.log.1")), 2);
+    assert_eq!(lines(&dir.join("alerts.log.2")), 2);
+    assert!(!dir.join("alerts.log.3").exists());
 }

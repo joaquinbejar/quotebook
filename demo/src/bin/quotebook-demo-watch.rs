@@ -4,15 +4,16 @@
 //! quotebook-demo-watch --url <RPC> --config <DEMO_JSON> --settings <MAKER_JSON>
 //!   --maker-address <ADDRESS> --payer <ADDRESS> [--taker <ADDRESS>]
 //!   --endpoint ws://127.0.0.1:<PORT> --halt-file <PATH> [--taker-log <PATH>]
-//!   [--out <PATH>] [--log-file <PATH>] [--interval <SECS>] [--realert <SECS>]
+//!   [--out <PATH>] [--log-file <PATH>] [--alerts-log <PATH>] [--interval <SECS>] [--realert <SECS>]
 //!   [--min-balance <LAMPORTS>] [--min-usdc <ATOMS>] [--min-long <TOKENS>]
 //!   [--min-taker-usdc <ATOMS>] [--usdc-approval <ATOMS>] [--long-approval <TOKENS>]
 //! ```
 //!
 //! Each pass ([`quotebook_demo::watch::pass`]) writes one `pass` JSON line, an `expected` line per
 //! feed and listed closure, a `resolved` line for each alert that cleared and an `alert` line for
-//! each alert due, to `--out` (rotated at 10 MB, 5 kept) or stdout. For each alert due it runs
-//! `QUOTEBOOK_WATCH_ALERT_CMD`, if set, with `sh -c`, the alert in `QUOTEBOOK_ALERT_KIND`,
+//! each alert due, to `--out` (rotated at 10 MB, 5 kept) or stdout. For each alert due it appends
+//! one line (UTC time, kind, subject, message) to `--alerts-log`, if given (rotated the same way),
+//! and runs `QUOTEBOOK_WATCH_ALERT_CMD`, if set, with `sh -c`, the alert in `QUOTEBOOK_ALERT_KIND`,
 //! `QUOTEBOOK_ALERT_SUBJECT` and `QUOTEBOOK_ALERT_MESSAGE`; an alert that stays active is
 //! delivered again after `--realert` seconds (default 3,600). Nothing goes on any bus.
 //!
@@ -109,6 +110,11 @@ fn run(args: &Args) -> Result<(), CliError> {
         ),
         None => LineOut::Stdout,
     };
+    let mut alerts_log = args
+        .opt("alerts-log")
+        .map(|path| RotatingFile::open(Path::new(path), MAX_LOG_BYTES, KEEP_LOGS))
+        .transpose()
+        .map_err(|e| CliError::Args(format!("--alerts-log: {e}")))?;
     let alert_cmd = std::env::var("QUOTEBOOK_WATCH_ALERT_CMD").ok();
     let mut rpc = Cluster::new(args.req("url")?);
     let mut status =
@@ -143,7 +149,11 @@ fn run(args: &Args) -> Result<(), CliError> {
                     "now": pass.now,
                 }),
             );
-            if watch::deliver(alert_cmd.as_deref(), a) {
+            let logged = alerts_log
+                .as_mut()
+                .is_none_or(|log| watch::log_alert(log, a, pass.now));
+            let sent = watch::deliver(alert_cmd.as_deref(), a);
+            if logged && sent {
                 book.delivered(a, pass.now);
             }
         }

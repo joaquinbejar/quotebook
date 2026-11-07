@@ -477,6 +477,8 @@ Two passes by hand from the branch, against public devnet and the running maker,
   weekend closure (22:00Z Friday to 23:00Z Sunday), so each wrote one `expected` line with that
   closure and no alert.
 - **Delivery:** a second pass with `--min-balance 2000000000` raised `balance` and ran the alert
-  command, which appended one line with the kind, subject and message. No line carried the RPC URL.
+  command, which appended one line with the kind, subject and message. A third, at 11:52:14Z with
+  `--alerts-log`, made the watcher write that line itself (UTC time, `balance`, the payer and the
+  message) to the rotated alert log. No line carried the RPC URL.
 
 The agent is not installed yet; it will be installed after the D4 merge.

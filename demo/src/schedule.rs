@@ -153,6 +153,11 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
 
 /// The civil year of a day number since 1970-01-01.
 fn year_of(days: i64) -> Option<i64> {
+    civil_from_days(days).map(|(year, _, _)| year)
+}
+
+/// The civil date (year, month, day) of a day number since 1970-01-01.
+fn civil_from_days(days: i64) -> Option<(i64, i64, i64)> {
     let z = days.checked_add(EPOCH_SHIFT)?;
     let era = z.checked_div_euclid(DAYS_PER_ERA)?;
     let doe = z.checked_rem_euclid(DAYS_PER_ERA)?;
@@ -167,12 +172,30 @@ fn year_of(days: i64) -> Option<i64> {
             .checked_sub(yoe.checked_div(100)?)?,
     )?;
     let march_year = yoe.checked_add(era.checked_mul(YEARS_PER_ERA)?)?;
-    // March-based day of year: 306 is January 1 of the next civil year.
-    if doy >= 306 {
-        march_year.checked_add(1)
+    // March-based month: 0 is March, 10 is January.
+    let mp = doy.checked_mul(5)?.checked_add(2)?.checked_div(153)?;
+    let day = doy
+        .checked_sub(mp.checked_mul(153)?.checked_add(2)?.checked_div(5)?)?
+        .checked_add(1)?;
+    let (month, year) = if mp < 10 {
+        (mp.checked_add(3)?, march_year)
     } else {
-        Some(march_year)
-    }
+        (mp.checked_sub(9)?, march_year.checked_add(1)?)
+    };
+    Some((year, month, day))
+}
+
+/// Unix seconds as `YYYY-MM-DDTHH:MM:SSZ`; `None` out of range.
+#[must_use]
+pub fn utc_iso(secs: i64) -> Option<String> {
+    let (year, month, day) = civil_from_days(secs.checked_div_euclid(SECONDS_PER_DAY)?)?;
+    let rem = secs.checked_rem_euclid(SECONDS_PER_DAY)?;
+    let hour = rem.checked_div(SECONDS_PER_HOUR)?;
+    let minute = rem.checked_rem(SECONDS_PER_HOUR)?.checked_div(60)?;
+    let second = rem.checked_rem(60)?;
+    Some(format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
+    ))
 }
 
 #[cfg(test)]
@@ -198,6 +221,23 @@ mod tests {
         assert_eq!(year_of(days_from_civil(2026, 12, 31).unwrap()), Some(2026));
         assert_eq!(year_of(days_from_civil(2028, 2, 29).unwrap()), Some(2028));
         assert_eq!(weekday(days_from_civil(2026, 11, 8).unwrap()), Some(SUNDAY));
+        assert_eq!(utc_iso(0).as_deref(), Some("1970-01-01T00:00:00Z"));
+        assert_eq!(
+            utc_iso(at(2026, 11, 13, 21, 5, 9)).as_deref(),
+            Some("2026-11-13T21:05:09Z")
+        );
+        assert_eq!(
+            utc_iso(at(2028, 2, 29, 23, 59, 59)).as_deref(),
+            Some("2028-02-29T23:59:59Z")
+        );
+        assert_eq!(
+            utc_iso(at(2027, 1, 1, 0, 0, 0)).as_deref(),
+            Some("2027-01-01T00:00:00Z")
+        );
+        for days in -800_000..800_000 {
+            let (y, m, d) = civil_from_days(days).unwrap();
+            assert_eq!(days_from_civil(y, m, d), Some(days));
+        }
     }
 
     #[test]

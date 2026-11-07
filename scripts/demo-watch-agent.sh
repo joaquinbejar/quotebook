@@ -16,11 +16,12 @@
 #
 # It holds no key: the maker, payer and taker are addresses (QUOTEBOOK_WATCH_MAKER,
 # QUOTEBOOK_WATCH_PAYER and QUOTEBOOK_WATCH_TAKER, defaulting to the devnet demo's), and it signs
-# nothing. The RPC URL must be the public devnet one (QUOTEBOOK_DEMO_URL). Each alert runs
-# QUOTEBOOK_WATCH_ALERT_CMD with the alert in QUOTEBOOK_ALERT_KIND, QUOTEBOOK_ALERT_SUBJECT and
-# QUOTEBOOK_ALERT_MESSAGE; by default it appends one line to <dir>/alerts.log. Nothing goes on
-# any bus. Output: <dir>/watch.jsonl (one JSON line a pass and one per alert, rotated at 10 MB, 5
-# kept), <dir>/watch-log.jsonl (the watcher's own log, rotated the same way), and launchd's
+# nothing. The RPC URL must be the public devnet one (QUOTEBOOK_DEMO_URL). Each alert is one line
+# in <dir>/alerts.log, written and rotated by the watcher (10 MB, 5 kept); if QUOTEBOOK_WATCH_ALERT_CMD
+# is set at install, each alert also runs it with the alert in QUOTEBOOK_ALERT_KIND,
+# QUOTEBOOK_ALERT_SUBJECT and QUOTEBOOK_ALERT_MESSAGE. Nothing goes on any bus. Output:
+# <dir>/watch.jsonl (one JSON line a pass and one per alert, rotated at 10 MB, 5 kept),
+# <dir>/watch-log.jsonl (the watcher's own log, rotated the same way), and launchd's
 # <dir>/watch-stderr.log for anything printed before logging starts.
 
 set -eu
@@ -98,8 +99,14 @@ install)
 	root=$(cd "$(dirname "$0")/.." && pwd)
 	bin=${QUOTEBOOK_WATCH_BIN:-$root/target/release/quotebook-demo-watch}
 	[ -x "$bin" ] || { echo "$bin missing: cargo build --release -p quotebook-demo" >&2 && exit 1; }
-	default_alert="printf '%s %s %s %s\\n' \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"\$QUOTEBOOK_ALERT_KIND\" \"\$QUOTEBOOK_ALERT_SUBJECT\" \"\$QUOTEBOOK_ALERT_MESSAGE\" >> '$dir/alerts.log'"
-	alert=${QUOTEBOOK_WATCH_ALERT_CMD:-$default_alert}
+	alert=${QUOTEBOOK_WATCH_ALERT_CMD:-}
+	env_block=''
+	if [ -n "$alert" ]; then
+		env_block="	<key>EnvironmentVariables</key>
+	<dict>
+		<key>QUOTEBOOK_WATCH_ALERT_CMD</key><string>$(xml "$alert")</string>
+	</dict>"
+	fi
 	mkdir -p "$dir" "$HOME/Library/LaunchAgents"
 	cp "$bin" "$dir/quotebook-demo-watch"
 	cat >"$plist" <<EOF
@@ -124,11 +131,9 @@ install)
 		<string>--taker-log</string><string>$(xml "$dir/trades.jsonl")</string>
 		<string>--out</string><string>$(xml "$dir/watch.jsonl")</string>
 		<string>--log-file</string><string>$(xml "$dir/watch-log.jsonl")</string>
+		<string>--alerts-log</string><string>$(xml "$dir/alerts.log")</string>
 	</array>
-	<key>EnvironmentVariables</key>
-	<dict>
-		<key>QUOTEBOOK_WATCH_ALERT_CMD</key><string>$(xml "$alert")</string>
-	</dict>
+$env_block
 	<key>LimitLoadToSessionType</key>
 	<array>
 		<string>Aqua</string>

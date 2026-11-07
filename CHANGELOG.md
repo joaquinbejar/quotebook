@@ -19,11 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the taker's `trades.jsonl`, and alerts on `balance`, `inventory`, `collateral`, `allowance`,
   `maker-down`, `stale-spot` (one `expected` line per listed closure instead of an alert, until 600 s
   after the reopening), `risk-unavailable`, `halted`, `writer-cap`, `no-series`, `fill-error` and
-  `rpc`. Each alert runs `QUOTEBOOK_WATCH_ALERT_CMD` and comes back after 3,600 s while active; the
-  JSON lines rotate at 10 MB, 5 kept. `scripts/demo-watch-agent.sh` installs it under launchd.
+  `rpc`. Each alert is one line in `--alerts-log` and runs `QUOTEBOOK_WATCH_ALERT_CMD` if set, and
+  comes back after 3,600 s while active; the JSON lines and the alert log rotate at 10 MB, 5 kept. `scripts/demo-watch-agent.sh` installs it under launchd.
 - `quotebook-demo`: `writer_cap`, the cap on contracts written (2 contracts, 10.40 USDC committed)
   read from every metalbook `Writer` position at `finalized`, failing closed; and
-  `schedule::closure_at` and `last_closure_before`.
+  `schedule::closure_at`, `last_closure_before` and `utc_iso`.
 - `quotebook-maker`: `client::request_status`.
 - `quotebook-cli`: `Rpc::finalized_accounts`, `finalized_signatures` and `finalized_transaction`,
   with `Cluster` implementations.

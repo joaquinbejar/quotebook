@@ -1081,6 +1081,35 @@ impl LineOut {
     }
 }
 
+/// One line of the alert log for `a` at `now`: UTC time, kind, subject and message, separated by
+/// spaces, with any line break in the subject or message replaced by a space so one alert is one
+/// line.
+#[must_use]
+pub fn alert_log_line(a: &Alert, now: i64) -> String {
+    let flat = |s: &str| s.replace(['\n', '\r'], " ");
+    let time = crate::schedule::utc_iso(now).unwrap_or_else(|| now.to_string());
+    format!(
+        "{time} {} {} {}\n",
+        a.kind,
+        flat(&a.subject),
+        flat(&a.message)
+    )
+}
+
+/// Appends `a` to the alert log `w` in one write. `true` if it was written.
+pub fn log_alert(w: &mut impl std::io::Write, a: &Alert, now: i64) -> bool {
+    match w
+        .write_all(alert_log_line(a, now).as_bytes())
+        .and_then(|()| w.flush())
+    {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!(kind = a.kind, error = %e, "alert log not written; retried at the next pass");
+            false
+        }
+    }
+}
+
 /// Runs `cmd` with `sh -c` for one alert, with the alert in `QUOTEBOOK_ALERT_KIND`,
 /// `QUOTEBOOK_ALERT_SUBJECT` and `QUOTEBOOK_ALERT_MESSAGE` (never on the command line). `true` if
 /// it exited 0, or there is no command.

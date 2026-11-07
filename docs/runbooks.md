@@ -236,10 +236,12 @@ restarted at most once a minute, one pass every 60 s. Check:
 **Stop:** `launchctl bootout user/$(id -u)/com.quotebook.demo-watch.demo` (or `gui/`), or
 `scripts/demo-watch-agent.sh uninstall demo`. `kill <PID>` only restarts it. Never `pkill`.
 
-**Alerts** go to `$DIR/alerts.log`, one line each (time, kind, subject, message), and as `alert`
-lines in `watch.jsonl`. An alert that stays active comes back every 3,600 s; one that clears
-writes a `resolved` line. Set `QUOTEBOOK_WATCH_ALERT_CMD` at install for another command; it gets
-the alert in `QUOTEBOOK_ALERT_KIND`, `QUOTEBOOK_ALERT_SUBJECT` and `QUOTEBOOK_ALERT_MESSAGE`.
+**Alerts** go to `$DIR/alerts.log`, one line each (UTC time, kind, subject, message), written by
+the watcher (`--alerts-log`), and as `alert` lines in `watch.jsonl`. An alert that stays active
+comes back every 3,600 s; one that clears writes a `resolved` line. Set
+`QUOTEBOOK_WATCH_ALERT_CMD` at install to also run a command per alert; it gets the alert in
+`QUOTEBOOK_ALERT_KIND`, `QUOTEBOOK_ALERT_SUBJECT` and `QUOTEBOOK_ALERT_MESSAGE`. A delivery that
+fails, to the log or the command, is retried at the next pass.
 
 | Kind | Means | Do |
 | --- | --- | --- |
@@ -262,5 +264,5 @@ one writes one `expected` line per feed and closure in `watch.jsonl` and no aler
 after the scheduled reopening; from then on it is a normal alert. An alert already firing when a
 window starts keeps firing, and a holiday alerts.
 
-**Logs:** `watch.jsonl` and `watch-log.jsonl` rotate at 10 MB and keep 5 old files. `alerts.log`
-grows by one line per delivery, at most one an hour per alert.
+**Logs:** `watch.jsonl`, `watch-log.jsonl` and `alerts.log` rotate at 10 MB and keep 5 old
+files each.
