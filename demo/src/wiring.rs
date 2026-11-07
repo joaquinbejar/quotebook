@@ -84,8 +84,14 @@ fn demo() -> DemoConfig {
 
 /// The service over `view`, resumed at `NOW` with the window of `view`'s first snapshot.
 fn rig(view: &RpcChainView<FakeRpc>) -> Rig {
+    rig_at(view, NOW, PathBuf::from("/nonexistent/quotebook-demo-halt"))
+}
+
+/// The service over `view`, resumed at `started_at` with the window of `view`'s next snapshot
+/// and `halt_file` as its halt file.
+fn rig_at(view: &RpcChainView<FakeRpc>, started_at: i64, halt_file: PathBuf) -> Rig {
     let listed = capped_call(1, 52, EXPIRY);
-    let time = Arc::new(AtomicI64::new(NOW));
+    let time = Arc::new(AtomicI64::new(started_at));
     let clock = TestClock(Arc::clone(&time));
     let board = Arc::new(Board::new(&demo(), Box::new(clock.clone())));
     board.set_series(&[listed]);
@@ -119,9 +125,9 @@ fn rig(view: &RpcChainView<FakeRpc>) -> Rig {
         &view.balances(),
         Start::Resume {
             window: Box::new(first.window),
-            started_at: UnixTimestamp::new(NOW),
+            started_at: UnixTimestamp::new(started_at),
         },
-        PathBuf::from("/nonexistent/quotebook-demo-halt"),
+        halt_file,
         Box::new(clock),
     )
     .unwrap();
@@ -282,6 +288,72 @@ fn the_hosted_service_quotes_only_what_the_finalized_snapshot_allows() {
         RejectReason::RiskUnavailable
     );
     let _ = rig.metalbook_series;
+}
+
+/// Codex P1 on #44: a drain right after a restart must not end before the quotes the previous
+/// run signed have expired, although the new run has issued nothing and holds no reservation.
+#[test]
+fn a_drain_after_a_restart_waits_for_the_previous_runs_quotes() {
+    use crate::ops::{drain, Drain};
+
+    let view =
+        RpcChainView::new(chain(NonceWindow::new()), PROGRAM, MAKER, host_watched()).unwrap();
+
+    // The first run signs an ask once its cold start is over.
+    let first = rig(&view);
+    with_rpc(&view, |rpc| {
+        hold_long(rpc, 2, 2);
+        first.at(rpc, NOW + 71);
+    });
+    first.service.reconcile(&view).unwrap();
+    let ServerMessage::Quote(signed) = first.ask(1, TakerSide::Buy, TAKER) else {
+        panic!("the first run should quote");
+    };
+    let expires_at = quotebook_core::Quote::decode(&from_hex(&signed.quote).unwrap())
+        .unwrap()
+        .terms()
+        .expires_at
+        .get();
+    assert!(expires_at > NOW + 72);
+    drop(first);
+
+    // It dies at once; launchd starts the second run one second later, and the operator halts
+    // it straight away.
+    let halt = std::env::temp_dir().join(format!("quotebook-demo-drain-{}", std::process::id()));
+    std::fs::write(&halt, "").unwrap();
+    let restarted = NOW + 72;
+    let second = rig_at(&view, restarted, halt.clone());
+    with_rpc(&view, |rpc| second.at(rpc, restarted));
+    second.service.reconcile(&view).unwrap();
+    let status = second.status();
+    assert!(status.halted);
+    assert_eq!(status.open_quotes, 0);
+
+    // The bound is the end of the cold start (60 s TTL + 10 s), past the old quote's expiry.
+    let barrier = restarted + 70;
+    assert_eq!(status.newest_expires_at, Some(barrier));
+    assert!(barrier >= expires_at);
+    let at = UnixTimestamp::new;
+    assert_eq!(
+        drain(&status, at(restarted)).unwrap(),
+        Drain::Waiting { until: barrier }
+    );
+    // Still waiting once the old quote has expired: the new run cannot know it was the last.
+    assert_eq!(
+        drain(&status, at(expires_at)).unwrap(),
+        Drain::Waiting { until: barrier }
+    );
+    assert_eq!(
+        drain(&status, at(barrier - 1)).unwrap(),
+        Drain::Waiting { until: barrier }
+    );
+    assert_eq!(drain(&status, at(barrier)).unwrap(), Drain::Done);
+
+    // Past the cold start the bound stays, so a late drain still ends at the same time.
+    with_rpc(&view, |rpc| second.at(rpc, barrier + 1));
+    second.service.reconcile(&view).unwrap();
+    assert_eq!(second.status().newest_expires_at, Some(barrier));
+    std::fs::remove_file(&halt).unwrap();
 }
 
 fn host_watched() -> Vec<crate::chain::WatchedAccount> {

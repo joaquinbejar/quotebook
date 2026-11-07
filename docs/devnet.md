@@ -425,7 +425,11 @@ Both token accounts hold nothing until D5's funding, so every quote is refused w
   `TakerNotAllowed`.
 - **`discover`** lists the profile: `1 listed, 0 invalid, 0 not allowed`.
 - **Halt:** `demo-agent.sh halt demo` drained at once (`newest_expires_at` null), and the next request
-  got `Halted`.
+  got `Halted`. Draining at once after a restart was a bug (Codex on #44): a quote of the previous
+  run could still fill. With the fix, on 2026-11-07 the agent was reinstalled at 08:58:55Z and
+  halted 8 s later; `newest_expires_at` was 09:00:05Z (the end of the 70 s cold start), and the
+  drain waited 66 s, until a finalized Clock of 09:00:08Z, before reporting `drained`. The halt
+  file was then removed and the agent left running.
 - **Revoke:** drill 1 had no nonce to cancel (`next_nonce` 0 equals the window's base) and revoked
   both allowances; drill 2 forced `cancel_all` with `QUOTEBOOK_DEMO_NEW_MIN=1`. Both were confirmed by
   a finalized snapshot (`window_base` 1, `spl-token display` showing no delegation) and restarted the

@@ -172,8 +172,11 @@ To stop it for good: `launchctl bootout user/$(id -u)/com.quotebook.demo-maker.d
 or `scripts/demo-agent.sh uninstall demo`. Never `pkill`.
 
 **Halt and drain:** `scripts/demo-agent.sh halt demo` creates `$DIR/HALT`, so every request gets
-`Halted`, then waits until a finalized Clock reaches the newest expiry the service signed. Quotes
-signed before the halt stay fillable until then; the halt revokes nothing. Remove `$DIR/HALT` to
+`Halted`, then waits until a finalized Clock reaches the service's `newest_expires_at`: the newest
+expiry it signed and, after a restart, at least the end of its cold start, since a quote of the
+previous run may still be fillable. A drain right after a restart therefore takes up to 70 s
+(60 s TTL + 10 s). Quotes signed before the halt stay fillable until then; the halt revokes
+nothing. Remove `$DIR/HALT` to
 quote again.
 
 **Revoke, in an emergency** (D1's order): `scripts/demo-agent.sh revoke demo`. It halts, sends

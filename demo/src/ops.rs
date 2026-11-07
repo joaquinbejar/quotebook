@@ -1,7 +1,9 @@
 //! Halt, drain and revoke (`docs/PLAN-phase2.md`, D1 and D3), as checks on finalized state.
 //!
 //! - **Drain:** the halt file stops new quotes, and signed ones stay fillable until they expire.
-//!   The drain is over when a finalized Clock reaches the service's `newest_expires_at`.
+//!   The drain is over when a finalized Clock reaches the service's `newest_expires_at`, which
+//!   after a restart covers the previous run's quotes through the end of the cold start. With no
+//!   bound at all (a fresh service that signed nothing) it is over at once.
 //! - **Revoke**, in an emergency: `cancel_all` up to the service's next nonce, then a token
 //!   `Revoke` on every maker account, then both confirmed at `finalized`: the window's base at or
 //!   above the new minimum and no allowance left to the maker's delegate PDA.

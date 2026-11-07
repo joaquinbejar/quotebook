@@ -23,7 +23,8 @@
 # <dir>/stderr.log for anything printed before logging starts.
 #
 # `halt` creates <dir>/HALT, which stops new quotes, then waits until a finalized Clock passes the
-# newest expiry the service signed (the drain). Remove <dir>/HALT to quote again.
+# newest expiry the service signed, or after a restart the end of its cold start, which bounds
+# the previous run's quotes (the drain). Remove <dir>/HALT to quote again.
 # `revoke` is the emergency path (D1): halt, `cancel_all` up to the service's next nonce, a token
 # Revoke on every maker account, both confirmed at finalized, then a restart of the agent, which
 # stays halted. It signs with the maker key and pays with $QUOTEBOOK_DEMO_KEYS/payer.json. If the
