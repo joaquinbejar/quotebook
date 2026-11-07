@@ -292,10 +292,38 @@ into a route. That is a separate integration, on Jupiter's side, and out of scop
 since its fills go through Jupiter's own `rfq_v2`. No page read documents a way for a third-party RFQ
 program to join.
 
+## The prototype as built
+
+`jupiter-rfq/` (D6's prototype) implements the sections above, with these choices where they
+leave room:
+
+- **Transactions** are parsed by hand (`tx.rs`), strictly: one packet, canonical lengths, no
+  trailing bytes, the sanitize rules. Lookups are parsed, then refused.
+- **`expire_at`** is not known when quoting, since Jupiter sets it. A fill is accepted when it lies
+  in `[quoted_at, quoted_at + 55 s + 10 s of skew]` and at least `min_landing_secs` (20 s in the
+  shipped config) after now.
+- **Accounts:** the maker's two token accounts in `fill` must be the configured ones, and the taker's
+  signature must verify with the maker's slot still empty; the toolkit's validator checks neither.
+- **Not quoted:** native-SOL paths (an optional token account left out), a separate receiver and an
+  integrator fee. `/quote` declines a receiver other than the taker; the validator refuses System
+  and token transfers and a non-zero `integrator_fee_bps`.
+- **Flags:** bit 0 must match the quote type; any other bit is refused.
+- **Tracking:** until the maker would sign, a transaction is identified by the taker's signature.
+- **No chain reads:** the binary reports a static wallet and static mids from its config; the desk's
+  release and rebuild logic is exercised against a fake chain in tests.
+- **At `/quote`** the per-transaction fee cap stands in for the unknown fee in the SOL floor and the
+  hourly budget.
+- **The OpenAPI example transaction** is not valid base64 (841 characters); the acceptance suite's
+  transaction is the one that decodes.
+- **The acceptance suite was not run:** `npm ci --ignore-scripts` refuses its out-of-sync
+  `package-lock.json`, and the pinned alternative, `pnpm-lock.yaml`, needs `pnpm`, which is not
+  installed. Its eight cases are replayed in `tests/acceptance.rs` under the `acceptance` feature.
+
 ## Not verified
 
 - How the fee rounds, on which side it applies for exact-out, and how the accrued fee is collected.
 - The Order Engine program's behaviour on mainnet: this reads its published source, and no build was
   compared with the deployed binary.
-- Whether the acceptance suite's lockfile installs cleanly; it has not been run.
+- The acceptance suite itself: its `package-lock.json` is out of sync, so `npm ci` refuses it.
+- How Jupiter reads `x-request-timeout`; the prototype takes milliseconds.
 - Anything in Jupiter's registration or Edge, by design.
