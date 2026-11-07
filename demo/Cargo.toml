@@ -15,7 +15,7 @@ optfix = { workspace = true }
 pyth-lite = { workspace = true }
 quotebook-cli = { path = "../cli" }
 quotebook-core = { workspace = true }
-quotebook-maker = { path = "../maker", version = "0.1" }
+quotebook-maker = { path = "../maker", version = "0.2" }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

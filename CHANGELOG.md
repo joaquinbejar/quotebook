@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-07
+
+The on-chain program is unchanged from `3d0ec13`, the commit frozen for the audit and deployed on
+devnet; these crates match it. 0.1.x clients cannot settle against it: `settle` now takes the fee
+account.
+
 ### Added
 
 - `quotebook-demo` (`demo/`, not published): metalbook series priced with one optfix 0.3
@@ -26,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read fails closed. A `status` request reports the service's state without taking a nonce. The
   single-series constructor keeps its behaviour.
 
-### Changed (breaking, for 0.2.0)
+### Changed (breaking)
 
 - `quotebook-maker`: `RejectReason` gains `UnknownSeries`, `RiskLimit`, `RiskUnavailable`, `Halted`
   and `TakerNotAllowed`; `ClientMessage` and `ServerMessage` gain `Status`; `ConfigError` gains
@@ -38,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `quotebook-sdk`: `SettleAccounts` gains `fee_account: Option<Address>`, so struct literals
   must set it; new `withdraw_fees`, `create_fee_account`, `set_profile`, `close_profile` and
   `maker_profile`.
+- `quotebook-maker` (I12, risk relative to the mid): `PricingParams` gains
+  `min_half_spread_bps`, `max_half_spread_bps`, `max_skew_bps` and `model_units` (`ModelUnits`);
+  `quote_prices` is replaced by `clamped_prices` and `quote`; `PricingError::OutOfBounds` is
+  replaced by `NonPositiveBid`, `Crossed`, `TickTooCoarse` and `Tick`; new `PricingConfigError`
+  and `market` (`MarketInfo`, `Rounding`, `TickError`).
 
 ## [0.1.1] - 2026-10-30
 
@@ -81,6 +92,7 @@ and deployed only on devnet, as `3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo`
   logged (#12).
 - Devnet deployment with a settled demo fill, recorded in `docs/devnet.md` (#14).
 
-[Unreleased]: https://github.com/joaquinbejar/quotebook/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/joaquinbejar/quotebook/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/joaquinbejar/quotebook/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/joaquinbejar/quotebook/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/joaquinbejar/quotebook/releases/tag/v0.1.0

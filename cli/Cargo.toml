@@ -27,7 +27,7 @@ doc = false
 
 [dependencies]
 quotebook-core = { workspace = true }
-quotebook-maker = { path = "../maker", version = "0.1" }
+quotebook-maker = { path = "../maker", version = "0.2" }
 quotebook-sdk = { workspace = true }
 rust_decimal = { workspace = true }
 solana-account = { workspace = true }

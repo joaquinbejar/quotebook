@@ -3,7 +3,7 @@
 [![Issues](https://img.shields.io/github/issues/joaquinbejar/quotebook.svg)](https://github.com/joaquinbejar/quotebook/issues)
 [![PRs](https://img.shields.io/github/issues-pr/joaquinbejar/quotebook.svg)](https://github.com/joaquinbejar/quotebook/pulls)
 
-## QuoteBook v0.1.1: Firm RFQ Quotes on Solana
+## QuoteBook v0.2.0: Firm RFQ Quotes on Solana
 
 ### Table of Contents
 1. [Introduction](#introduction)
@@ -37,11 +37,14 @@ transaction per quote and no crank. Withdrawing every outstanding quote is one `
 
 ### Status
 
-v1 is complete through milestone 6 of [docs/PLAN.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/PLAN.md), and the milestone 7
-tooling (admin CLI, maker binary, taker CLI over RPC) is merged. The program is **deployed on
-devnet** as `3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo`, with one test series and a settled
-demo fill; addresses and signatures are in [docs/devnet.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/devnet.md). It is not on
-mainnet. The libraries are on crates.io at 0.1.1:
+v1 is complete ([docs/PLAN.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/PLAN.md)), and so is the improvement plan
+([docs/PLAN-improvements.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/PLAN-improvements.md)): series fees, the maker
+registry, the fill event, a TypeScript SDK and maker risk relative to the mid. The program is
+**frozen at `3d0ec13` for an external audit** ([docs/audit-scope.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/audit-scope.md)) and
+**deployed on devnet** from that commit as `3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo`; addresses
+and signatures are in [docs/devnet.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/devnet.md). It is not on mainnet. Work since
+the freeze is off chain only ([docs/PLAN-phase2.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/PLAN-phase2.md)). The libraries are on
+crates.io at 0.2.0, which matches the deployed program (0.1.x clients cannot settle against it):
 [`quotebook-core`](https://crates.io/crates/quotebook-core),
 [`quotebook-sdk`](https://crates.io/crates/quotebook-sdk) and
 [`quotebook-maker`](https://crates.io/crates/quotebook-maker); the program and the CLI tools
@@ -50,9 +53,11 @@ are built from this repository. Changes are listed in
 
 ### On Devnet
 
-The v0.1.0 program runs on devnet with one series on two test mints (QBB base, QBQ quote, 6
-decimals; one lot is 1 QBB, one tick is 0.01 QBQ per QBB). Deployed on 2026-10-30 from commit
-`898c173`; the full record is in
+The program was first deployed on 2026-10-30 from `898c173` and upgraded on 2026-11-03 to the
+reproducible build of `3d0ec13` (series fees and the maker registry). It holds three series:
+series 0 on two test mints (QBB base, QBQ quote, 6 decimals; one lot is 1 QBB, one tick is
+0.01 QBQ per QBB), series 1 whose base is a long token of a metalbook XAG option, quoted in
+devnet USDC, and series 2, like series 0 with a 10 bps taker fee. The full record is in
 [docs/devnet.md](https://github.com/joaquinbejar/quotebook/blob/main/docs/devnet.md#deployment-record).
 
 | What | Explorer |
@@ -62,8 +67,12 @@ decimals; one lot is 1 QBB, one tick is 0.01 QBQ per QBB). Deployed on 2026-10-3
 | `settle`: the taker buys 2 QBB at 25.65 QBQ from a signed quote, 8,595 CU | [transaction](https://explorer.solana.com/tx/5Pz59PQU4AGERy149Z4MYFiS2spssSxHq9w7gKUVyoNGrQ1H4HZENT3t4qhcZ56qzCE1tn8S4HmEL3DdY5xAQvM6?cluster=devnet) |
 | `cancel_all`: the maker voids every nonce below 2 | [transaction](https://explorer.solana.com/tx/61oRAy6waCXcAhBCMf5o4sqmf1dNMDvJRnsnMdgXDijyFndmEc715TeZ1dhu3bdFVNhSV4rcz5zEdSV6Rrxv33R9?cluster=devnet) |
 | Series 0 `6XjcDf…pGh7` | [account](https://explorer.solana.com/address/6XjcDfJ2bUyuoCTZYrwLcJihMAm5eoPuJxN9GNe9pGh7?cluster=devnet) |
+| `settle` on series 1: the taker buys 1 metalbook long token for 1.23 USDC (2026-11-02) | [transaction](https://explorer.solana.com/tx/4tNTwmG1t51A2uyhUwoVELv1R7qq2LsrwbdNbRMeWaZ2kXRXPUhRy2DbM3VGtPkwQvMdx4797RBgyAcYhfxTRB2c?cluster=devnet) |
+| Upgrade to `3d0ec13` (2026-11-03) | [transaction](https://explorer.solana.com/tx/5y8scCjTzJNiPQ8SK77gUQZgXXnpDYQqwQ9DeY5mxQPst89VKYPpyR5UtXEbGG6Au4c8u5JwFukuAcnN7s2SFnuC?cluster=devnet) |
+| `settle` on series 2 with the 10 bps fee, 15,199 CU | [transaction](https://explorer.solana.com/tx/5bnjMecD2bGgBW6UDLjc3gUeTz8y7B8AxcWKL6qKgmRBte7BzZqyFQm2chwHhzjHYp3EHmzYH3yQbANR1KQBeB2Y?cluster=devnet) |
+| Series 2 `8HJpxd…tu9Z` | [account](https://explorer.solana.com/address/8HJpxdrb9tNgW9BVYtytPNPfBGhQsauxwLwoqfwttu9Z?cluster=devnet) |
 
-The `settle` transaction holds two instructions: the ed25519 precompile, which verifies the
+The first rows are the original v1 deployment. Each `settle` transaction holds two instructions: the ed25519 precompile, which verifies the
 maker's signature over the 208-byte quote, and quotebook's `settle`, which reads that quote
 from the instructions sysvar and moves both legs.
 
@@ -105,10 +114,15 @@ funding a maker and a taker). In order:
 - **Replay protection**: a 16,384-nonce sliding window per maker, `cancel_all` and `cancel_nonce`.
 - **Partial fills** between the series `min_size` and the quoted size (one fill per nonce).
 - **SPL Token and Token-2022**, with an explicit extension allowlist.
+- **Series fees** (optional, at most 100 bps, fixed at creation): the taker pays them into a
+  Config-owned fee account; the admin withdraws them.
+- **Maker registry**: makers list an endpoint on chain; takers discover them and check every
+  quote as usual.
 - **Pinocchio 0.11**, `no_std`, no allocator, zero-copy `Pod` accounts; `settle` costs about
-  8.6k CU on SPL Token.
+  9.2k CU on SPL Token without a fee.
 - **Off-chain tooling**: a Rust SDK, a maker service (market-maker-rs Avellaneda-Stoikov
-  pricing, price bounds, nonce issuance, WebSocket RFQ), a taker client, and three CLIs.
+  pricing relative to the mid, price bounds, nonce issuance, a risk book for several series,
+  WebSocket RFQ), a taker client, three CLIs, and a TypeScript SDK in `ts/` (not on npm).
 - **Strict lints**: `unsafe_code`, `panic`, `unwrap_used`, `indexing_slicing`,
   `arithmetic_side_effects` and `float_arithmetic` are denied workspace wide, with a lint
   control crate that proves the lints fire.
@@ -151,8 +165,10 @@ Every account starts with an 8-byte header `{ tag, version, bump, _pad[5] }` and
 | Account | Seeds | Size | Holds |
 | --- | --- | ---: | --- |
 | `Config` | `["config"]` | 64 | admin, series count, `deployment_id` (first 16 bytes of the cluster's genesis hash) |
-| `Series` | `["series", base_mint, quote_mint, series_index_le]` | 144 | mints, lot sizes, `max_quote_ttl`, `min_size`, paused flag, Token-2022 flags, a copy of `deployment_id` |
-| `MakerState` | `["maker", maker]` | 2,120 | fill count, delegate bump, the 16,384-nonce replay window. Permanent: there is no close in v1, because re-creating it would reset the replay window |
+| `Series` | `["series", base_mint, quote_mint, series_index_le]` | 144 | mints, lot sizes, `max_quote_ttl`, `min_size`, `fee_bps`, paused flag, Token-2022 flags, a copy of `deployment_id` |
+| `MakerState` | `["maker", maker]` | 2,120 | fill count, delegate bump, the 16,384-nonce replay window. Permanent: there is no close, because re-creating it would reset the replay window |
+| `MakerProfile` | `["profile", maker]` | 208 | the maker's `wss://` endpoint (at most 128 bytes) and a name (at most 32); `settle` never reads it |
+| fee account | a token account of the quote mint owned by the Config PDA (`create_fee_account` makes its associated token account) | token account | collected series fees |
 | delegate | `["delegate", maker]` | none | signs the maker's leg of `settle` |
 
 ### Instructions
@@ -166,7 +182,10 @@ Every account starts with an 8-byte header `{ tag, version, bump, _pad[5] }` and
 | 3 | `init_maker` | maker, payer | Creates the signer's `MakerState` |
 | 4 | `cancel_all` | maker | Every nonce below `new_min` stops being fillable |
 | 5 | `cancel_nonce` | maker | One nonce stops being fillable |
-| 6 | `settle` | taker | Fills a signed quote read from the ed25519 precompile instruction at `sig_ix_index` |
+| 6 | `settle` | taker | Fills a signed quote read from the ed25519 precompile instruction at `sig_ix_index`; on a series with a fee, the taker also pays `floor(quote amount × fee_bps / 10,000)` into the fee account |
+| 8 | `withdraw_fees` | admin | Moves collected fees from a fee account to any token account of the same mint |
+| 9 | `set_profile` | maker, payer | Creates or overwrites the maker's `MakerProfile` |
+| 10 | `close_profile` | maker | Closes the profile and returns its rent |
 
 Every PDA is created with its canonical bump and survives pre-funding (anyone can send
 lamports to a PDA address before it exists). The program's account order for each instruction
@@ -273,9 +292,11 @@ let [precompile_ix, settle_ix] =
 // Send [precompile_ix, settle_ix] in that order, signed by the taker.
 ```
 
-`quotebook_sdk::ix` has a builder for every instruction (`init_config`, `create_series`,
-`init_maker`, `cancel_all`, `cancel_nonce`, `set_series_paused`, `set_config`, `settle`,
-`approve_delegate`), `quotebook_sdk::pda` derives every address and `quotebook_sdk::decode`
+`SettleAccounts::fee_account` names the series' fee account and is required when the series
+charges a fee. `quotebook_sdk::ix` has a builder for every instruction (`init_config`,
+`create_series`, `init_maker`, `cancel_all`, `cancel_nonce`, `set_series_paused`, `set_config`,
+`settle`, `withdraw_fees`, `set_profile`, `close_profile`) plus `approve_delegate`,
+`revoke_delegate` and `create_fee_account`, `quotebook_sdk::pda` derives every address and `quotebook_sdk::decode`
 reads the accounts.
 
 #### CLI over RPC
@@ -336,12 +357,15 @@ Measured in LiteSVM by `make bench`; full table and method in
 | Instruction | CU |
 | --- | ---: |
 | `init_config` | 4,645 |
-| `create_series` (SPL Token / Token-2022) | 7,892 / 8,460 |
-| `init_maker` | 4,554 |
-| `cancel_nonce`, `cancel_all` (worst case) | 1,676 to 1,788 |
-| `set_series_paused` / `set_config` | 3,254 / 1,684 |
-| `settle`, SPL Token (common / worst case) | 8,593 / 8,627 |
-| `settle`, Token-2022 (common / worst case) | 11,998 / 18,188 |
+| `create_series` (SPL Token / Token-2022) | 7,907 / 8,475 |
+| `init_maker` | 4,555 |
+| `cancel_nonce`, `cancel_all` (worst case) | 1,676 to 1,789 |
+| `set_series_paused` / `set_config` | 3,254 / 1,686 |
+| `settle`, SPL Token (common / worst case) | 9,204 / 9,240 |
+| `settle`, Token-2022 (common / worst case) | 12,611 / 18,801 |
+| `settle` with a 100 bps fee (SPL Token / Token-2022) | 12,207 to 12,220 / 17,345 |
+| `withdraw_fees` | 3,125 |
+| `set_profile` (create / update) / `close_profile` | 9,253 / 5,065 / 1,701 |
 | ed25519 precompile | 0 (charged as one signature in the fee) |
 
 ### Error Codes
@@ -383,10 +407,14 @@ Measured in LiteSVM by `make bench`; full table and method in
 | 129 | `WatermarkNotIncreasing` | `cancel_all` must raise the watermark |
 | 130 | `SelfTrade` | the taker is the quote's maker |
 | 131 | `AccountExtensionUnsupported` | CPI Guard on the taker's paying account, or required memos on a receiving account |
+| 132 | `FeeTooHigh` | a series fee above 100 bps |
+| 133 | `InsufficientFees` | `withdraw_fees` asked for more than the fee account holds |
+| 134 | `InvalidProfile` | a maker profile that is not canonical: bad endpoint or name, or non-zero padding |
 
 ### Security Notes
 
-- The program is **unaudited** and deployed only on devnet; do not use it with real funds.
+- The program is **unaudited** (frozen at `3d0ec13` for an external audit) and deployed only on
+  devnet; do not use it with real funds.
 - `init_config` can only be signed by the program's upgrade authority, so the deployment
   cannot be front-run. Deploy with the upgradeable loader, never loader-v4.
 - Quotes are bound to program id, series, deployment id (genesis hash prefix) and
