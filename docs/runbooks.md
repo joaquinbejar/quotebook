@@ -213,3 +213,54 @@ the loop first, `uninstall`.
 
 **Scheduled jobs and keys:** this agent holds only the demo maker key's file path. D5's roll job is
 the one that will hold the devnet admin key's path; a scheduled job never holds a mainnet admin key.
+
+## 8. Demo watcher on devnet (D4)
+
+`quotebook-demo-watch` under launchd, installed by `scripts/demo-watch-agent.sh`
+([`PLAN-phase2.md`](PLAN-phase2.md), D4). It holds no key and signs nothing: the maker, payer and
+taker are addresses. It reads the chain at `finalized`, the maker's `Status` (2 s timeout; it takes
+no nonce and no reservation), the halt file and the taker's `trades.jsonl`. Nothing goes on any bus.
+
+```sh
+cargo build --release -p quotebook-demo
+DIR=~/.local/share/quotebook-demo/demo        # shared with the maker agent
+```
+
+**Start:** install the maker first (section 7), then `scripts/demo-watch-agent.sh install demo`. It
+watches the configuration and port that agent runs, from `$DIR`. It runs always (`KeepAlive`),
+restarted at most once a minute, one pass every 60 s. Check:
+- `scripts/demo-watch-agent.sh status demo` shows `state = running`;
+- `$DIR/watch.jsonl` gets a `pass` line each minute, with the payer's lamports, the token accounts,
+  the writer's exposure, both spots' ages and the maker's status.
+
+**Stop:** `launchctl bootout user/$(id -u)/com.quotebook.demo-watch.demo` (or `gui/`), or
+`scripts/demo-watch-agent.sh uninstall demo`. `kill <PID>` only restarts it. Never `pkill`.
+
+**Alerts** go to `$DIR/alerts.log`, one line each (time, kind, subject, message), and as `alert`
+lines in `watch.jsonl`. An alert that stays active comes back every 3,600 s; one that clears
+writes a `resolved` line. Set `QUOTEBOOK_WATCH_ALERT_CMD` at install for another command; it gets
+the alert in `QUOTEBOOK_ALERT_KIND`, `QUOTEBOOK_ALERT_SUBJECT` and `QUOTEBOOK_ALERT_MESSAGE`.
+
+| Kind | Means | Do |
+| --- | --- | --- |
+| `balance` | the payer has under 0.3 SOL | refill it (section 7) |
+| `inventory` | the maker's or the taker's USDC is under 1 USDC | ask SOLANA-PROJECTS for funding (section 6) |
+| `collateral` | the cap has room for one more contract, but the maker's USDC cannot lock one | the next cycle writes nothing: fund it or let it be |
+| `allowance` | a delegate allowance is under 20% of its approval (4 USDC, 2 long tokens) | halt and drain, then approve again (section 7) |
+| `maker-down` | no `Status` answer within 2 s | `scripts/demo-agent.sh status demo`, then its crash loop steps |
+| `stale-spot` | a feed is older than 600 s outside a listed closure, or unusable | check the feed; the maker quotes nothing on it meanwhile |
+| `risk-unavailable` | the maker's snapshot is older than 60 s, or missing | check the RPC; the maker refuses every quote meanwhile |
+| `halted` | the halt file exists, or `Status` says halted | remove `$DIR/HALT` when the halt is over |
+| `writer-cap` | open contracts or committed collateral above 2 and 10.40 USDC, or the positions cannot be read | a bug or the key used elsewhere: halt and drain, then find out |
+| `no-series` | the market is open, the XAG calendar lists an expiry due, and no configured series is quotable | roll it (D5) and restart the maker with the new pair |
+| `fill-error` | the taker's last run failed | read its line in `$DIR/trades.jsonl` |
+| `rpc` | a read at `finalized` failed | nothing it could not see resolves until a read succeeds |
+
+**`stale-spot` and the closures:** the daily break (17:00 to 18:00 New York) and the weekend
+(Friday 17:00 to Sunday 18:00 New York) are the only listed windows. A spot that goes stale inside
+one writes one `expected` line per feed and closure in `watch.jsonl` and no alert, until 600 s
+after the scheduled reopening; from then on it is a normal alert. An alert already firing when a
+window starts keeps firing, and a holiday alerts.
+
+**Logs:** `watch.jsonl` and `watch-log.jsonl` rotate at 10 MB and keep 5 old files. `alerts.log`
+grows by one line per delivery, at most one an hour per alert.
