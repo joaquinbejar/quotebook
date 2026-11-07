@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `quotebook-demo-maker` (`demo/`, D3): the hosted demo maker on devnet, D1's multi-series service
+  over D2's marks on a loopback address, with a finalized RPC `ChainView` (one-slot snapshots with
+  account checks, the fill history walked page by page, failing closed), each spot's age in
+  `Status`, JSON log lines in a size-rotated file, and `status`, `drain`, `revoke` and `accounts`
+  commands; `scripts/demo-agent.sh` installs it under launchd and runs halt and revoke.
+- `quotebook-maker`: `client::request_status`.
+- `quotebook-cli`: `Rpc::finalized_accounts`, `finalized_signatures` and `finalized_transaction`,
+  with `Cluster` implementations.
+
+### Fixed
+
+- `quotebook-maker`: after a restart, `Status.newest_expires_at` is at least the end of the cold
+  start, which bounds the quotes the previous run signed. A drain started right after a restart
+  ended at once while one of those quotes could still fill.
+
 ## [0.2.0] - 2026-11-07
 
 The on-chain program is unchanged from `3d0ec13`, the commit frozen for the audit and deployed on

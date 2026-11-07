@@ -17,7 +17,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::market::MarketInfo;
 use crate::protocol::{
-    from_hex, ClientMessage, QuoteRequest, RejectReason, ServerMessage, TakerSide,
+    from_hex, ClientMessage, QuoteRequest, RejectReason, ServerMessage, StatusMessage,
+    StatusRequest, TakerSide,
 };
 
 /// A quote with the maker's signature over its canonical bytes.
@@ -76,26 +77,7 @@ pub struct Answer {
 ///
 /// `Transport`, `Protocol` or `Rejected`.
 pub async fn request_quote(url: &str, request: &QuoteRequest) -> Result<Answer, ClientError> {
-    let transport =
-        |e: tokio_tungstenite::tungstenite::Error| ClientError::Transport(e.to_string());
-    let (mut ws, _) = tokio_tungstenite::connect_async(url)
-        .await
-        .map_err(transport)?;
-    let json = serde_json::to_string(&ClientMessage::QuoteRequest(request.clone()))
-        .map_err(|e| ClientError::Protocol(e.to_string()))?;
-    ws.send(Message::text(json)).await.map_err(transport)?;
-    let answer = loop {
-        match ws.next().await {
-            Some(Ok(Message::Text(text))) => break text,
-            Some(Ok(_)) => continue,
-            Some(Err(e)) => return Err(transport(e)),
-            None => return Err(ClientError::Protocol("closed before answering".into())),
-        }
-    };
-    let _ = ws.close(None).await;
-    match serde_json::from_str::<ServerMessage>(&answer)
-        .map_err(|e| ClientError::Protocol(e.to_string()))?
-    {
+    match exchange(url, &ClientMessage::QuoteRequest(request.clone())).await? {
         ServerMessage::Quote(m) if m.request_id == request.request_id => {
             let bytes = from_hex(&m.quote).ok_or(ClientError::Protocol("quote hex".into()))?;
             let quote = Quote::decode(&bytes).map_err(|e| ClientError::Protocol(e.to_string()))?;
@@ -116,6 +98,45 @@ pub async fn request_quote(url: &str, request: &QuoteRequest) -> Result<Answer, 
         }
         ServerMessage::Quote(_) => Err(ClientError::Protocol("answer to another request".into())),
         ServerMessage::Status(_) => Err(ClientError::Protocol("status answer to a quote".into())),
+        ServerMessage::Reject(r) => Err(ClientError::Rejected {
+            reason: r.reason,
+            message: r.message,
+        }),
+    }
+}
+
+/// Sends one message and returns the first text answer.
+async fn exchange(url: &str, message: &ClientMessage) -> Result<ServerMessage, ClientError> {
+    let transport =
+        |e: tokio_tungstenite::tungstenite::Error| ClientError::Transport(e.to_string());
+    let (mut ws, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .map_err(transport)?;
+    let json = serde_json::to_string(message).map_err(|e| ClientError::Protocol(e.to_string()))?;
+    ws.send(Message::text(json)).await.map_err(transport)?;
+    let answer = loop {
+        match ws.next().await {
+            Some(Ok(Message::Text(text))) => break text,
+            Some(Ok(_)) => continue,
+            Some(Err(e)) => return Err(transport(e)),
+            None => return Err(ClientError::Protocol("closed before answering".into())),
+        }
+    };
+    let _ = ws.close(None).await;
+    serde_json::from_str::<ServerMessage>(&answer).map_err(|e| ClientError::Protocol(e.to_string()))
+}
+
+/// Asks the maker at `url` for its state (D1's `Status`): it takes no nonce and holds nothing,
+/// so a watcher or a drain can ask as often as it likes.
+///
+/// # Errors
+///
+/// `Transport`, `Protocol` or `Rejected`.
+pub async fn request_status(url: &str, request_id: u64) -> Result<StatusMessage, ClientError> {
+    match exchange(url, &ClientMessage::Status(StatusRequest { request_id })).await? {
+        ServerMessage::Status(m) if m.request_id == request_id => Ok(m),
+        ServerMessage::Status(_) => Err(ClientError::Protocol("answer to another request".into())),
+        ServerMessage::Quote(_) => Err(ClientError::Protocol("quote answer to a status".into())),
         ServerMessage::Reject(r) => Err(ClientError::Rejected {
             reason: r.reason,
             message: r.message,

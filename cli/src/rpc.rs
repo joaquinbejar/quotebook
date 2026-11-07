@@ -58,6 +58,60 @@ pub trait Rpc {
             "this RPC cannot list program accounts".into(),
         ))
     }
+    /// Every account of `addresses` at `finalized`, in one `getMultipleAccounts`, so all of them
+    /// are from the one slot returned with them.
+    ///
+    /// # Errors
+    ///
+    /// `Rpc` if the call fails, or if this RPC cannot read at `finalized` (the default).
+    fn finalized_accounts(
+        &mut self,
+        addresses: &[Address],
+    ) -> Result<(u64, Vec<Option<Account>>), CliError> {
+        let _ = addresses;
+        Err(CliError::Rpc("this RPC cannot read at finalized".into()))
+    }
+    /// One page of `getSignaturesForAddress` at `finalized`, newest first, starting below
+    /// `before` when given.
+    ///
+    /// # Errors
+    ///
+    /// `Rpc` if the call fails, or if this RPC cannot list signatures (the default).
+    fn finalized_signatures(
+        &mut self,
+        address: &Address,
+        before: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<SignatureInfo>, CliError> {
+        let _ = (address, before, limit);
+        Err(CliError::Rpc("this RPC cannot list signatures".into()))
+    }
+    /// `getTransaction` at `finalized`, JSON encoding, versions up to 0; `None` if the node does
+    /// not have it.
+    ///
+    /// # Errors
+    ///
+    /// `Rpc` if the call fails, or if this RPC cannot read transactions (the default).
+    fn finalized_transaction(
+        &mut self,
+        signature: &str,
+    ) -> Result<Option<serde_json::Value>, CliError> {
+        let _ = signature;
+        Err(CliError::Rpc("this RPC cannot read transactions".into()))
+    }
+}
+
+/// One entry of `getSignaturesForAddress`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureInfo {
+    /// The transaction's first signature, base58.
+    pub signature: String,
+    /// Its slot.
+    pub slot: u64,
+    /// Its block time, if the node has it.
+    pub block_time: Option<i64>,
+    /// Whether the transaction failed.
+    pub failed: bool,
 }
 
 /// A real cluster, at `confirmed` commitment. The URL (which may embed an API key) is never
@@ -155,6 +209,68 @@ impl Rpc for Cluster {
                     })
             })
             .collect()
+    }
+
+    fn finalized_accounts(
+        &mut self,
+        addresses: &[Address],
+    ) -> Result<(u64, Vec<Option<Account>>), CliError> {
+        self.client
+            .get_multiple_accounts_with_commitment(addresses, CommitmentConfig::finalized())
+            .map(|r| (r.context.slot, r.value))
+            .map_err(|e| CliError::Rpc(self.describe(&e)))
+    }
+
+    fn finalized_signatures(
+        &mut self,
+        address: &Address,
+        before: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<SignatureInfo>, CliError> {
+        use solana_rpc_client::rpc_client::GetConfirmedSignaturesForAddress2Config;
+        let before = before
+            .map(str::parse::<Signature>)
+            .transpose()
+            .map_err(|_| CliError::Rpc("not a signature".into()))?;
+        let config = GetConfirmedSignaturesForAddress2Config {
+            before,
+            until: None,
+            limit: Some(limit),
+            commitment: Some(CommitmentConfig::finalized()),
+        };
+        let page = self
+            .client
+            .get_signatures_for_address_with_config(address, config)
+            .map_err(|e| CliError::Rpc(self.describe(&e)))?;
+        Ok(page
+            .into_iter()
+            .map(|s| SignatureInfo {
+                signature: s.signature,
+                slot: s.slot,
+                block_time: s.block_time,
+                failed: s.err.is_some(),
+            })
+            .collect())
+    }
+
+    fn finalized_transaction(
+        &mut self,
+        signature: &str,
+    ) -> Result<Option<serde_json::Value>, CliError> {
+        use solana_rpc_client::api::request::RpcRequest;
+        let params = serde_json::json!([
+            signature,
+            {
+                "encoding": "json",
+                "commitment": "finalized",
+                "maxSupportedTransactionVersion": 0
+            }
+        ]);
+        let value: serde_json::Value = self
+            .client
+            .send(RpcRequest::GetTransaction, params)
+            .map_err(|e| CliError::Rpc(self.describe(&e)))?;
+        Ok((!value.is_null()).then_some(value))
     }
 }
 

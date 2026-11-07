@@ -408,3 +408,28 @@ fn test_client_speaks_tls() {
     };
     assert!(!message.contains("not compiled"), "{message}");
 }
+
+/// `request_status` over a real socket: the answer to its own request id, and no nonce taken.
+#[test]
+fn test_status_over_websocket() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let clock = clock();
+    let (service, _) = service(&clock, Box::new(FixedMid(d("100"))), "0.05");
+    let service = Arc::new(service);
+    let status = runtime.block_on(async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(Arc::clone(&service).serve(listener));
+        let first = client::request_status(&url, 41).await.unwrap();
+        let second = client::request_status(&url, 42).await.unwrap();
+        (first, second)
+    });
+    assert_eq!(status.0.request_id, 41);
+    assert_eq!(status.1.request_id, 42);
+    assert_eq!(status.0.next_nonce, 0);
+    assert_eq!(status.1.next_nonce, 0, "a status takes no nonce");
+    assert!(!status.0.halted);
+}

@@ -2929,6 +2929,7 @@ dependencies = [
 name = "quotebook-demo"
 version = "0.2.0"
 dependencies = [
+ "bytemuck",
  "metalbook-core",
  "metalbook-sdk",
  "optfix",
@@ -2936,16 +2937,21 @@ dependencies = [
  "quotebook-cli",
  "quotebook-core",
  "quotebook-maker",
+ "quotebook-sdk",
  "rust_decimal",
  "serde",
  "serde_json",
  "solana-account",
  "solana-address 2.7.0",
  "solana-hash",
+ "solana-keypair",
  "solana-signature",
+ "solana-signer",
  "solana-transaction",
  "thiserror 2.0.21",
+ "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
