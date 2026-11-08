@@ -60,6 +60,9 @@ pub const LONG_APPROVAL: u64 = 2;
 /// The rent metalbook charges the writer for a new `Writer` position, lamports (measured on
 /// devnet: the maker key pays it, not the fee payer).
 pub const POSITION_RENT: u64 = 1_056_640;
+/// A system account left with lamports must hold at least this (rent exemption of 0 bytes); a
+/// mint leaving the maker key between 1 and this minus 1 fails.
+pub const MIN_ACCOUNT_LAMPORTS: u64 = 650_240;
 /// The allowance approved on the USDC account, atoms (4 USDC; D5).
 pub const USDC_APPROVAL: u64 = 4_000_000;
 /// One troy ounce in milli-ounces: the demo trades 1 oz contracts only.
@@ -563,15 +566,17 @@ pub fn plan(view: &View, demo: &DemoConfig, max_long: u64) -> Result<CyclePlan, 
     let mut lamports = view.maker_lamports;
     for m in &targets {
         if view.position(&m.address).is_none() {
-            if lamports < POSITION_RENT {
+            let left = lamports.checked_sub(POSITION_RENT);
+            let Some(left) = left.filter(|l| *l == 0 || *l >= MIN_ACCOUNT_LAMPORTS) else {
                 out.notes.push(format!(
-                    "{}: nothing minted, the maker key holds {lamports} lamports, under the \
-                     {POSITION_RENT} rent of a new position",
+                    "{}: nothing minted, the maker key holds {lamports} lamports: the \
+                     {POSITION_RENT} rent of a new position must leave it 0 or at least \
+                     {MIN_ACCOUNT_LAMPORTS}",
                     m.address
                 ));
                 continue;
-            }
-            lamports = lamports.saturating_sub(POSITION_RENT);
+            };
+            lamports = left;
         }
         let held = view.long(&m.long_mint).map_or(0, |t| t.amount);
         let band = max_long.saturating_sub(held);

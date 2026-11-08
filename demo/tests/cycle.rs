@@ -24,7 +24,7 @@ use quotebook_demo::chain::{CLOCK_SYSVAR, SYSVAR_PROGRAM, TOKEN_PROGRAM};
 use quotebook_demo::config::{DemoConfig, SeriesPair};
 use quotebook_demo::cycle::{
     long_account, plan, read_view, run_cycle, with_pairs, BookSeries, CycleIo, MetalSeries,
-    Patience, Step, View, LONG_APPROVAL, POSITION_RENT, USDC_APPROVAL,
+    Patience, Step, View, LONG_APPROVAL, MIN_ACCOUNT_LAMPORTS, POSITION_RENT, USDC_APPROVAL,
 };
 use quotebook_demo::host::associated_token_account;
 use quotebook_demo::writer_cap::Position;
@@ -868,6 +868,19 @@ fn a_new_position_needs_the_makers_rent() {
     assert!(p.notes.iter().any(|n| n.contains("rent")), "{:?}", p.notes);
     v.maker_lamports = POSITION_RENT;
     assert_eq!(mints(&plan(&v, &demo(), MAX_LONG).unwrap().steps).len(), 1);
+    // What the rent leaves must be 0 or rent exempt (edges measured by metalbook on LiteSVM).
+    for (lamports, minted) in [
+        (POSITION_RENT + 1, 0),
+        (POSITION_RENT + MIN_ACCOUNT_LAMPORTS - 1, 0),
+        (POSITION_RENT + MIN_ACCOUNT_LAMPORTS, 1),
+    ] {
+        v.maker_lamports = lamports;
+        assert_eq!(
+            mints(&plan(&v, &demo(), MAX_LONG).unwrap().steps).len(),
+            minted,
+            "{lamports}"
+        );
+    }
     // An existing position pays no new rent.
     let m = v.metal[0];
     v.maker_lamports = 0;
