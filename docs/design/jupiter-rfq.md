@@ -160,7 +160,8 @@ the maker owing the difference later. So the book reserves the gross amount and 
 sources do not say how or when it is collected, and that would need asking Jupiter. Until then the
 accrued fee is **debt**: it is held against the output mint's balance like a reservation, so a later
 quote cannot spend it. The chain cannot rebuild it after a restart, so it lives in a durable ledger,
-written on every accrual; a missing or unreadable ledger, or a failed write, refuses every quote.
+written on every accrual. Each reservation is written to the same ledger before the book answers
+that it would sign, so a fill landing across a restart still accrues once; a missing or unreadable ledger, or a failed write, refuses every quote.
 Only an operator's recorded collection, with its evidence, releases it, and only once written.
 
 ## The fill-transaction validator

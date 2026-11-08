@@ -753,3 +753,93 @@ fn a_retry_while_reserved_is_co_signed_only_while_it_can_still_land() {
     assert_eq!(reserve(&r, &req).unwrap_err().message, "halted");
     std::fs::remove_file(&r.desk.config().limits.halt_file).unwrap();
 }
+
+#[test]
+fn a_fill_landing_across_a_restart_accrues_its_fee_once() {
+    let ledger = MemoryLedger::new();
+    let r = rig_with_ledger(config("restart-fill"), Start::Fresh, ledger.clone());
+    let t = Keypair::new();
+    let q = quote(&r, "a", &t);
+    let v = reserve(&r, &FillTx::for_quote(&q, &t).request("a", &t)).unwrap();
+    assert_eq!(ledger.pending().len(), 1, "written before the answer");
+    drop(r);
+
+    let r = rig_with_ledger(
+        config("restart-fill"),
+        Start::Resume {
+            started_at: NOW + 1,
+        },
+        ledger.clone(),
+    );
+    assert_eq!(r.desk.status().open_swaps, 1);
+    r.chain.land(v.taker_signature, 12_000, NOW + 5, false);
+    r.chain.at(NOW + 70);
+    r.clock.set(NOW + 70);
+    r.desk.reconcile(&r.chain).unwrap();
+    assert_eq!(r.desk.status().open_swaps, 0);
+    assert_eq!(r.desk.status().accrued_fees, vec![(BASE, 200_000)]);
+    assert_eq!(ledger.debts(), vec![(BASE, 200_000)]);
+    assert!(ledger.pending().is_empty());
+    // Once: another restart and pass add nothing.
+    let r = rig_with_ledger(config("restart-fill"), Start::Fresh, ledger.clone());
+    r.chain.land(v.taker_signature, 12_000, NOW + 5, false);
+    r.desk.reconcile(&r.chain).unwrap();
+    assert_eq!(ledger.debts(), vec![(BASE, 200_000)]);
+}
+
+#[test]
+fn a_fill_expiring_across_a_restart_is_released_and_accrues_nothing() {
+    let ledger = MemoryLedger::new();
+    let r = rig_with_ledger(config("restart-expire"), Start::Fresh, ledger.clone());
+    let t = Keypair::new();
+    let q = quote(&r, "a", &t);
+    let v = reserve(&r, &FillTx::for_quote(&q, &t).request("a", &t)).unwrap();
+    drop(r);
+    let r = rig_with_ledger(config("restart-expire"), Start::Fresh, ledger.clone());
+    r.chain.at(v.expire_at + 1);
+    r.desk.reconcile(&r.chain).unwrap();
+    assert_eq!(r.desk.status().open_swaps, 0);
+    assert!(ledger.debts().is_empty());
+    assert!(ledger.pending().is_empty());
+}
+
+#[test]
+fn a_fill_that_cannot_be_written_is_refused() {
+    let ledger = MemoryLedger::new();
+    let r = rig_with_ledger(config("reserve-write"), Start::Fresh, ledger.clone());
+    let t = Keypair::new();
+    let q = quote(&r, "a", &t);
+    let req = FillTx::for_quote(&q, &t).request("a", &t);
+    ledger.fail_store(true);
+    assert_eq!(
+        reserve(&r, &req).unwrap_err().message,
+        "debt ledger write failed"
+    );
+    assert_eq!(r.desk.status().open_swaps, 0);
+    ledger.fail_store(false);
+    assert!(reserve(&r, &req).is_ok(), "the quote was not consumed");
+}
+
+#[test]
+fn a_retry_with_another_signature_is_refused() {
+    use base64::Engine as _;
+    let r = rig("retry-forged");
+    let t = Keypair::new();
+    let q = quote(&r, "a", &t);
+    let req = FillTx::for_quote(&q, &t).request("a", &t);
+    reserve(&r, &req).unwrap();
+    let engine = base64::engine::general_purpose::STANDARD;
+    let mut bytes = engine.decode(&req.transaction).unwrap();
+    // After the one-byte count, the first signature; flipping any signature changes the set.
+    for b in &mut bytes[1..129] {
+        *b ^= 1;
+    }
+    let mut forged = req.clone();
+    forged.transaction = engine.encode(bytes);
+    let err = reserve(&r, &forged).unwrap_err();
+    assert_eq!(
+        err.known,
+        Some(RejectionReason::SignatureVerificationFailed)
+    );
+    assert_eq!(r.desk.status().open_swaps, 1);
+}

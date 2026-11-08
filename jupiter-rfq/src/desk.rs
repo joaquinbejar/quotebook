@@ -42,7 +42,7 @@ use rust_decimal::Decimal;
 use solana_address::Address;
 
 use crate::api::{QuoteRequest, QuoteResponse, QuoteType, RejectionReason, SwapRequest};
-use crate::ledger::DebtLedger;
+use crate::ledger::{DebtLedger, LedgerState, PendingFill as Reservation};
 use crate::pricing::{self, PriceError, PricingInputs, Side};
 use crate::tx::Transaction;
 use crate::validate::{self, Expected, FeeBudget, Invalid, Validated};
@@ -363,22 +363,14 @@ struct StoredQuote {
     consumed: bool,
 }
 
-#[derive(Debug, Clone)]
-struct Reservation {
-    id: TxId,
-    output_mint: Address,
-    amount_out: u64,
-    fee_liability: u64,
-    fee_lamports: u64,
-    expire_at: i64,
-}
-
 /// A transaction already accepted: its quote, what was validated and, once the reservation is
 /// released, the terminal outcome a retry gets.
 #[derive(Debug, Clone)]
 struct Accepted {
     quote_id: String,
     validated: Validated,
+    /// The verified transaction's signatures: a retry must carry the same ones.
+    signatures: Vec<[u8; 64]>,
     outcome: Option<&'static str>,
 }
 
@@ -467,6 +459,13 @@ impl State {
             })
     }
 
+    fn ledger_state(&self) -> LedgerState {
+        LedgerState {
+            debts: self.debts(),
+            pending: self.reservations.clone(),
+        }
+    }
+
     fn debts(&self) -> Vec<(Address, u64)> {
         let mut out: Vec<(Address, u64)> = self
             .accrued
@@ -519,11 +518,21 @@ impl Desk {
         ledger: Box<dyn DebtLedger>,
         start: Start,
     ) -> Self {
-        let (accrued, ledger_loaded, ledger_failure) = match ledger.load() {
-            Ok(debts) => (debts.into_iter().collect::<HashMap<_, _>>(), true, None),
+        let (accrued, reservations, ledger_loaded, ledger_failure) = match ledger.load() {
+            Ok(l) => (
+                l.debts.into_iter().collect::<HashMap<_, _>>(),
+                l.pending,
+                true,
+                None,
+            ),
             Err(e) => {
                 tracing::warn!(error = %e, "debt ledger not loaded; refusing until restarted with a readable ledger");
-                (HashMap::new(), false, Some("debt ledger unreadable"))
+                (
+                    HashMap::new(),
+                    Vec::new(),
+                    false,
+                    Some("debt ledger unreadable"),
+                )
             }
         };
         let startup = match start {
@@ -544,7 +553,7 @@ impl Desk {
             ledger,
             state: Mutex::new(State {
                 quotes: HashMap::new(),
-                reservations: Vec::new(),
+                reservations,
                 accepted: HashMap::new(),
                 snapshot: None,
                 failure: None,
@@ -661,6 +670,8 @@ impl Desk {
             }
         }
         state.reservations = kept;
+        // Every release leaves the ledger, in the same write as any fee it accrued.
+        state.ledger_dirty = state.ledger_dirty || !released.is_empty();
         for (id, outcome) in released {
             for a in state.accepted.values_mut() {
                 if a.validated.taker_signature == id {
@@ -674,8 +685,8 @@ impl Desk {
             a.outcome.is_none() || clock <= a.validated.expire_at.saturating_add(HOUR_SECS)
         });
         if state.ledger_dirty && state.ledger_loaded {
-            let debts = state.debts();
-            match self.ledger.store(&debts) {
+            let contents = state.ledger_state();
+            match self.ledger.store(&contents) {
                 Ok(()) => {
                     state.ledger_dirty = false;
                     if state.ledger_failure == Some("debt ledger write failed") {
@@ -978,6 +989,12 @@ impl Desk {
                     "transaction no longer reserved; not co-signed again",
                 ));
             }
+            if tx.signatures != a.signatures {
+                return Err(Rejection::known(
+                    RejectionReason::SignatureVerificationFailed,
+                    "the signatures differ from the accepted transaction's",
+                ));
+            }
             let clock = self
                 .readiness(&state, now)
                 .map_err(|d| Rejection::plain(d.to_string()))?;
@@ -1074,6 +1091,13 @@ impl Desk {
                 fee_lamports: validated.fee_lamports,
                 expire_at: validated.expire_at,
             });
+            // Durable before any permission to sign, so a restart cannot lose this fill.
+            let contents = state.ledger_state();
+            if let Err(e) = self.ledger.store(&contents) {
+                state.reservations.pop();
+                tracing::warn!(error = %e, "fill not written; refused");
+                return Err(Rejection::plain("debt ledger write failed"));
+            }
             if let Some(q) = state.quotes.get_mut(&req.quote_id) {
                 q.consumed = true;
             }
@@ -1082,6 +1106,7 @@ impl Desk {
                 Accepted {
                     quote_id: req.quote_id.clone(),
                     validated,
+                    signatures: tx.signatures.clone(),
                     outcome: None,
                 },
             );
@@ -1148,7 +1173,10 @@ impl Desk {
             debts.push((mint, left));
         }
         self.ledger
-            .store(&debts)
+            .store(&LedgerState {
+                debts,
+                pending: state.reservations.clone(),
+            })
             .map_err(|e| CollectionError::Write(e.to_string()))?;
         if left > 0 {
             state.accrued.insert(mint, left);
