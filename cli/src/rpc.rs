@@ -58,6 +58,24 @@ pub trait Rpc {
             "this RPC cannot list program accounts".into(),
         ))
     }
+    /// Accounts owned by `program_id` with exactly `data_size` bytes whose bytes at each
+    /// `(offset, bytes)` of `memcmp` match, at `finalized` (RPC `getProgramAccounts` with a size
+    /// and memcmp filters).
+    ///
+    /// # Errors
+    ///
+    /// `Rpc` if the call fails, or if this RPC cannot list accounts at `finalized` (the default).
+    fn finalized_program_accounts(
+        &mut self,
+        program_id: &Address,
+        data_size: u64,
+        memcmp: &[(usize, Vec<u8>)],
+    ) -> Result<Vec<(Address, Account)>, CliError> {
+        let _ = (program_id, data_size, memcmp);
+        Err(CliError::Rpc(
+            "this RPC cannot list program accounts at finalized".into(),
+        ))
+    }
     /// Every account of `addresses` at `finalized`, in one `getMultipleAccounts`, so all of them
     /// are from the one slot returned with them.
     ///
@@ -190,6 +208,44 @@ impl Rpc for Cluster {
             account_config: RpcAccountInfoConfig {
                 encoding: Some(solana_account_decoder_client_types::UiAccountEncoding::Base64),
                 commitment: Some(CommitmentConfig::confirmed()),
+                ..RpcAccountInfoConfig::default()
+            },
+            with_context: None,
+            sort_results: None,
+        };
+        let accounts = self
+            .client
+            .get_program_ui_accounts_with_config(program_id, config)
+            .map_err(|e| CliError::Rpc(self.describe(&e)))?;
+        accounts
+            .into_iter()
+            .map(|(address, ui)| {
+                ui.to_account()
+                    .map(|account| (address, account))
+                    .ok_or_else(|| {
+                        CliError::Rpc("undecodable account in getProgramAccounts".into())
+                    })
+            })
+            .collect()
+    }
+
+    fn finalized_program_accounts(
+        &mut self,
+        program_id: &Address,
+        data_size: u64,
+        memcmp: &[(usize, Vec<u8>)],
+    ) -> Result<Vec<(Address, Account)>, CliError> {
+        use solana_rpc_client::api::config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
+        use solana_rpc_client::api::filter::{Memcmp, RpcFilterType};
+        let mut filters = vec![RpcFilterType::DataSize(data_size)];
+        filters.extend(memcmp.iter().map(|(offset, bytes)| {
+            RpcFilterType::Memcmp(Memcmp::new_raw_bytes(*offset, bytes.clone()))
+        }));
+        let config = RpcProgramAccountsConfig {
+            filters: Some(filters),
+            account_config: RpcAccountInfoConfig {
+                encoding: Some(solana_account_decoder_client_types::UiAccountEncoding::Base64),
+                commitment: Some(CommitmentConfig::finalized()),
                 ..RpcAccountInfoConfig::default()
             },
             with_context: None,

@@ -26,6 +26,61 @@ pub fn market_open(now: i64) -> bool {
     open(now).unwrap_or(false)
 }
 
+/// One listed closure: closed from `start` (included) to `end` (excluded), Unix seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Closure {
+    /// The first closed second.
+    pub start: i64,
+    /// The first open second after it: the scheduled reopening.
+    pub end: i64,
+}
+
+/// The longest listed closure is the weekend, 49 hours; a search stops after this many.
+const MAX_CLOSURE_HOURS: i64 = 72;
+/// How far back [`last_closure_before`] looks: more than a week, so it always finds one.
+const MAX_LOOKBACK_HOURS: i64 = 8 * 24;
+
+/// The listed closure that contains `now`, or `None` when the market is open (or `now` is out of
+/// range). Both windows start and end on a whole UTC hour, since New York's offset is a whole
+/// number of hours and daylight saving changes on one, so the search steps by hours.
+#[must_use]
+pub fn closure_at(now: i64) -> Option<Closure> {
+    if open(now)? {
+        return None;
+    }
+    let hour = now.checked_sub(now.checked_rem_euclid(SECONDS_PER_HOUR)?)?;
+    let mut start = hour;
+    for _ in 0..MAX_CLOSURE_HOURS {
+        let before = start.checked_sub(SECONDS_PER_HOUR)?;
+        if open(before)? {
+            break;
+        }
+        start = before;
+    }
+    let mut end = hour.checked_add(SECONDS_PER_HOUR)?;
+    for _ in 0..MAX_CLOSURE_HOURS {
+        if open(end)? {
+            return Some(Closure { start, end });
+        }
+        end = end.checked_add(SECONDS_PER_HOUR)?;
+    }
+    None
+}
+
+/// The latest listed closure that ended at or before `now`.
+#[must_use]
+pub fn last_closure_before(now: i64) -> Option<Closure> {
+    let mut hour = now.checked_sub(now.checked_rem_euclid(SECONDS_PER_HOUR)?)?;
+    for _ in 0..MAX_LOOKBACK_HOURS {
+        let before = hour.checked_sub(1)?;
+        if open(hour)? && !open(before)? {
+            return closure_at(before);
+        }
+        hour = hour.checked_sub(SECONDS_PER_HOUR)?;
+    }
+    None
+}
+
 fn open(now: i64) -> Option<bool> {
     let offset_hours: i64 = if in_daylight_time(now)? { -4 } else { -5 };
     let local = now.checked_add(offset_hours.checked_mul(SECONDS_PER_HOUR)?)?;
@@ -98,6 +153,11 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
 
 /// The civil year of a day number since 1970-01-01.
 fn year_of(days: i64) -> Option<i64> {
+    civil_from_days(days).map(|(year, _, _)| year)
+}
+
+/// The civil date (year, month, day) of a day number since 1970-01-01.
+fn civil_from_days(days: i64) -> Option<(i64, i64, i64)> {
     let z = days.checked_add(EPOCH_SHIFT)?;
     let era = z.checked_div_euclid(DAYS_PER_ERA)?;
     let doe = z.checked_rem_euclid(DAYS_PER_ERA)?;
@@ -112,12 +172,30 @@ fn year_of(days: i64) -> Option<i64> {
             .checked_sub(yoe.checked_div(100)?)?,
     )?;
     let march_year = yoe.checked_add(era.checked_mul(YEARS_PER_ERA)?)?;
-    // March-based day of year: 306 is January 1 of the next civil year.
-    if doy >= 306 {
-        march_year.checked_add(1)
+    // March-based month: 0 is March, 10 is January.
+    let mp = doy.checked_mul(5)?.checked_add(2)?.checked_div(153)?;
+    let day = doy
+        .checked_sub(mp.checked_mul(153)?.checked_add(2)?.checked_div(5)?)?
+        .checked_add(1)?;
+    let (month, year) = if mp < 10 {
+        (mp.checked_add(3)?, march_year)
     } else {
-        Some(march_year)
-    }
+        (mp.checked_sub(9)?, march_year.checked_add(1)?)
+    };
+    Some((year, month, day))
+}
+
+/// Unix seconds as `YYYY-MM-DDTHH:MM:SSZ`; `None` out of range.
+#[must_use]
+pub fn utc_iso(secs: i64) -> Option<String> {
+    let (year, month, day) = civil_from_days(secs.checked_div_euclid(SECONDS_PER_DAY)?)?;
+    let rem = secs.checked_rem_euclid(SECONDS_PER_DAY)?;
+    let hour = rem.checked_div(SECONDS_PER_HOUR)?;
+    let minute = rem.checked_rem(SECONDS_PER_HOUR)?.checked_div(60)?;
+    let second = rem.checked_rem(60)?;
+    Some(format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
+    ))
 }
 
 #[cfg(test)]
@@ -143,6 +221,23 @@ mod tests {
         assert_eq!(year_of(days_from_civil(2026, 12, 31).unwrap()), Some(2026));
         assert_eq!(year_of(days_from_civil(2028, 2, 29).unwrap()), Some(2028));
         assert_eq!(weekday(days_from_civil(2026, 11, 8).unwrap()), Some(SUNDAY));
+        assert_eq!(utc_iso(0).as_deref(), Some("1970-01-01T00:00:00Z"));
+        assert_eq!(
+            utc_iso(at(2026, 11, 13, 21, 5, 9)).as_deref(),
+            Some("2026-11-13T21:05:09Z")
+        );
+        assert_eq!(
+            utc_iso(at(2028, 2, 29, 23, 59, 59)).as_deref(),
+            Some("2028-02-29T23:59:59Z")
+        );
+        assert_eq!(
+            utc_iso(at(2027, 1, 1, 0, 0, 0)).as_deref(),
+            Some("2027-01-01T00:00:00Z")
+        );
+        for days in -800_000..800_000 {
+            let (y, m, d) = civil_from_days(days).unwrap();
+            assert_eq!(days_from_civil(y, m, d), Some(days));
+        }
     }
 
     #[test]
@@ -178,6 +273,68 @@ mod tests {
         assert!(in_daylight_time(at(2026, 3, 8, 7, 0, 0)).unwrap());
         assert!(in_daylight_time(at(2026, 11, 1, 5, 59, 59)).unwrap());
         assert!(!in_daylight_time(at(2026, 11, 1, 6, 0, 0)).unwrap());
+    }
+
+    #[test]
+    fn the_daily_break_is_one_closure() {
+        let winter = Closure {
+            start: at(2026, 11, 4, 22, 0, 0),
+            end: at(2026, 11, 4, 23, 0, 0),
+        };
+        assert_eq!(closure_at(at(2026, 11, 4, 21, 59, 59)), None);
+        assert_eq!(closure_at(winter.start), Some(winter));
+        assert_eq!(closure_at(at(2026, 11, 4, 22, 30, 0)), Some(winter));
+        assert_eq!(closure_at(winter.end), None);
+        let summer = Closure {
+            start: at(2026, 7, 8, 21, 0, 0),
+            end: at(2026, 7, 8, 22, 0, 0),
+        };
+        assert_eq!(closure_at(at(2026, 7, 8, 21, 59, 59)), Some(summer));
+    }
+
+    #[test]
+    fn the_weekend_is_one_closure_of_49_hours() {
+        let weekend = Closure {
+            start: at(2026, 11, 6, 22, 0, 0),
+            end: at(2026, 11, 8, 23, 0, 0),
+        };
+        assert_eq!(closure_at(at(2026, 11, 7, 12, 0, 0)), Some(weekend));
+        assert_eq!(closure_at(at(2026, 11, 8, 22, 59, 59)), Some(weekend));
+        assert_eq!(weekend.end - weekend.start, 49 * 3_600);
+    }
+
+    #[test]
+    fn a_weekend_across_the_daylight_change_is_one_closure() {
+        // Friday 17:00 EDT to Sunday 18:00 EST: 50 hours.
+        let weekend = Closure {
+            start: at(2026, 10, 30, 21, 0, 0),
+            end: at(2026, 11, 1, 23, 0, 0),
+        };
+        assert_eq!(closure_at(at(2026, 10, 31, 12, 0, 0)), Some(weekend));
+        assert_eq!(weekend.end - weekend.start, 50 * 3_600);
+    }
+
+    #[test]
+    fn the_last_closure_is_the_latest_that_ended() {
+        let winter = Closure {
+            start: at(2026, 11, 4, 22, 0, 0),
+            end: at(2026, 11, 4, 23, 0, 0),
+        };
+        assert_eq!(last_closure_before(winter.end), Some(winter));
+        assert_eq!(last_closure_before(at(2026, 11, 5, 12, 0, 0)), Some(winter));
+        // Inside the next day's break, the previous one is still the last that ended.
+        assert_eq!(
+            last_closure_before(at(2026, 11, 5, 22, 30, 0)),
+            Some(winter)
+        );
+        let weekend = Closure {
+            start: at(2026, 11, 6, 22, 0, 0),
+            end: at(2026, 11, 8, 23, 0, 0),
+        };
+        assert_eq!(
+            last_closure_before(at(2026, 11, 8, 23, 5, 0)),
+            Some(weekend)
+        );
     }
 
     #[test]

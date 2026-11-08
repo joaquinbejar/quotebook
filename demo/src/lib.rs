@@ -1,5 +1,5 @@
 //! The demo maker's metalbook side: which series it quotes, what they are worth and when it
-//! must not quote (`docs/PLAN-phase2.md`, D2). Devnet only.
+//! must not quote (`docs/PLAN-phase2.md`, D2), and its watcher (D4). Devnet only.
 //!
 //! - [`chain`]: [`chain::RpcChainView`], the risk book's finalized view of devnet (D3).
 //! - [`config`]: the static pairing of metalbook and quotebook series, vol and rate.
@@ -12,6 +12,8 @@
 //! - [`host`]: the hosted maker's settings, markets and service (D3).
 //! - [`ops`]: drain and revoke, judged on finalized state (D3).
 //! - [`logging`]: JSON log lines, with a size-rotated file (D3).
+//! - [`watch`]: the watcher's checks and alert book (D4).
+//! - [`writer_cap`]: the cap on contracts written, read from chain (D4, D5).
 //!
 //! A mid is in USDC per long token. Long mints have 0 decimals and one token is one contract, so
 //! this is the mark per contract; `quotebook_maker::market::MarketInfo::price_to_ticks` converts
@@ -32,6 +34,8 @@ pub mod reader;
 pub mod schedule;
 pub mod series;
 pub mod spot;
+pub mod watch;
+pub mod writer_cap;
 
 #[cfg(test)]
 pub(crate) mod test_support;

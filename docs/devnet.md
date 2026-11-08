@@ -438,3 +438,47 @@ Both token accounts hold nothing until D5's funding, so every quote is refused w
   (`ThrottleInterval` 120), with a new cold start.
 - **Left running** after the checks: `com.quotebook.demo-maker.demo`, approvals restored, no halt
   file. It quotes nothing until D5 funds it.
+
+## Demo watcher (D4, 2026-11-07)
+
+`quotebook-demo-watch`, from [`PLAN-phase2.md`](PLAN-phase2.md), D4, installed by
+`scripts/demo-watch-agent.sh install demo` next to the maker agent (runbook section 8). It holds no
+key and sends nothing: every account is an address, and it reads at `finalized`. **Devnet only:** the
+install script refuses any RPC URL but the public devnet one.
+
+### What it watches
+
+| Item | Value |
+| --- | --- |
+| Payer (`balance`, under 0.3 SOL) | `EEGQJgeP96RSHZd97cX3p3HVivAGGKU4LSsQzR7TFVCY` |
+| Maker USDC (`inventory` under 1 USDC, `allowance` under 0.8 of 4 USDC) | `F7KjgYNYkFK1RLF81yZcfRKq1wEb9wCDDSSrVUPe8Co2` |
+| Maker long tokens, series 1 (`allowance` under 0.4 of 2) | `F1YY6EnJKLQxR3bwjGWMHrYCB2saZqMdTS7Ju4s91GTm` |
+| Taker USDC (`inventory` under 1 USDC) | `8kicXLNNrXtx2EYngwqYCq8HmWZHtThsLvwmTAqoLmnT`, the ATA of `3ZBj…sqLs` |
+| Writer positions (`writer-cap`, `collateral`, `no-series`) | metalbook `Writer` accounts of `142G…VYaVB`, `getProgramAccounts` at `finalized` filtered by size 80, tag 4 and owner at byte 40 |
+| Calendar (`no-series`) | metalbook's XAG calendar PDA, with the config's `window_s` |
+| Feeds (`stale-spot`) | `2uPQ…uEWW` (XAU), `H9Jx…Znot` (XAG) |
+| Maker (`maker-down`, `risk-unavailable`, `halted`) | `Status` on `ws://127.0.0.1:9000`, and `HALT` in the agent's directory |
+| Taker (`fill-error`) | `trades.jsonl` in the agent's directory, written by D5's taker |
+
+**`trades.jsonl`** (D5 writes it): one JSON object per taker run, ending in a newline, with at least
+`time` (Unix seconds), `outcome` (`filled`, `skipped` or `failed`) and, for a skip or a failure,
+`reason`. The watcher reads only the last complete line; a missing file is silent.
+
+### Checks (2026-11-07, about 11:40Z, Saturday, market closed)
+
+Two passes by hand from the branch, against public devnet and the running maker, without launchd:
+- **Reads:** the Clock, payer (983,776,400 lamports), the maker's USDC (14 USDC, allowance 4 USDC)
+  and long-token account (0, allowance 2), and the taker's USDC (8.77 USDC) all decoded at
+  `finalized`; the owner-filtered `getProgramAccounts` on metalbook answered (0 positions, so 0
+  contracts and 0 committed). The derived token accounts are the ones D3 recorded.
+- **Maker:** `Status` answered within the timeout (`snapshot_age_secs` 2, not halted) and
+  `next_nonce` stayed 1: no nonce taken.
+- **Weekend:** both feeds' last updates were Friday 21:59:59Z, about 13.7 hours old, inside the
+  weekend closure (22:00Z Friday to 23:00Z Sunday), so each wrote one `expected` line with that
+  closure and no alert.
+- **Delivery:** a second pass with `--min-balance 2000000000` raised `balance` and ran the alert
+  command, which appended one line with the kind, subject and message. A third, at 11:52:14Z with
+  `--alerts-log`, made the watcher write that line itself (UTC time, `balance`, the payer and the
+  message) to the rotated alert log. No line carried the RPC URL.
+
+The agent is not installed yet; it will be installed after the D4 merge.
