@@ -34,7 +34,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use metalbook_core::{OptionKind, Underlying};
 use metalbook_sdk::{decode, pda};
@@ -488,6 +488,89 @@ pub fn listing_expected(expiries: &[i64], window_s: u32, now: i64) -> bool {
     })
 }
 
+/// The checks that need no chain: `Status` and the halt file. They run even when the cluster
+/// cannot be read.
+fn maker_checks(
+    status: &mut dyn StatusSource,
+    w: &Watched,
+    p: &mut Pass,
+    line: &mut Map<String, Value>,
+) {
+    // maker-down, risk-unavailable
+    p.observe("maker");
+    let answer = status.status();
+    match &answer {
+        Ok(s) => {
+            p.observe("status");
+            line.insert(
+                "status".into(),
+                json!({
+                    "halted": s.halted,
+                    "open_quotes": s.open_quotes,
+                    "next_nonce": s.next_nonce,
+                    "newest_expires_at": s.newest_expires_at,
+                    "snapshot_age_secs": s.snapshot_age_secs,
+                }),
+            );
+            let fresh = s
+                .snapshot_age_secs
+                .is_some_and(|a| a <= w.limits.max_snapshot_age);
+            if !fresh {
+                p.alerts.push(alert(
+                    "risk-unavailable",
+                    "status",
+                    w.maker.to_string(),
+                    match s.snapshot_age_secs {
+                        Some(a) => format!(
+                            "the maker's snapshot is {a} s old, above {}: it refuses every quote",
+                            w.limits.max_snapshot_age
+                        ),
+                        None => "the maker has no snapshot: it refuses every quote".to_string(),
+                    },
+                ));
+            }
+        }
+        Err(e) => {
+            line.insert("status".into(), json!({"error": e}));
+            p.alerts.push(alert(
+                "maker-down",
+                "maker",
+                w.maker.to_string(),
+                format!("the maker does not answer Status: {e}"),
+            ));
+        }
+    }
+
+    // halted
+    let halt = match std::fs::metadata(&w.halt_file) {
+        Ok(_) => Some(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(false),
+        Err(_) => None,
+    };
+    // Decided only from what was seen: the file says halted by itself, but its absence says
+    // nothing about the service unless `Status` answered.
+    let verdict = match (halt, &answer) {
+        (Some(true), _) => Some((true, true)),
+        (Some(false), Ok(s)) => Some((false, s.halted)),
+        (Some(false), Err(_)) | (None, _) => None,
+    };
+    if let Some((file, service)) = verdict {
+        p.observe("halt");
+        if file || service {
+            p.alerts.push(alert(
+                "halted",
+                "halt",
+                w.maker.to_string(),
+                format!(
+                    "the maker is halted{}: no new quote until {} is removed",
+                    if file { " by its halt file" } else { "" },
+                    w.halt_file.display()
+                ),
+            ));
+        }
+    }
+}
+
 /// One pass at the watcher's current settings. `host_now` is used only when the chain cannot be
 /// read.
 #[allow(clippy::too_many_lines)]
@@ -535,7 +618,10 @@ pub fn pass(
                 "cluster",
                 format!("the watcher cannot read the cluster at finalized: {e}"),
             ));
-            p.lines.push(json!({"pass": {"now": host_now, "error": e}}));
+            maker_checks(status, w, &mut p, &mut line);
+            line.insert("now".into(), json!(host_now));
+            line.insert("error".into(), json!(e));
+            p.lines.insert(0, json!({ "pass": Value::Object(line) }));
             return p;
         }
     };
@@ -815,7 +901,10 @@ pub fn pass(
     };
 
     // collateral: a cycle could write one more contract, but the USDC cannot cover it.
-    p.observe("collateral");
+    // Observed only when both inputs were read, so a failed read resolves nothing.
+    if exposure.is_some() && maker_usdc_amount.is_some() {
+        p.observe("collateral");
+    }
     let cheapest = writable
         .iter()
         .filter(|s| s.terms.key().kind() == OptionKind::Call)
@@ -897,73 +986,7 @@ pub fn pass(
     }
     line.insert("spots".into(), Value::Array(spots));
 
-    // maker-down, risk-unavailable
-    p.observe("maker");
-    let answer = status.status();
-    match &answer {
-        Ok(s) => {
-            p.observe("status");
-            line.insert(
-                "status".into(),
-                json!({
-                    "halted": s.halted,
-                    "open_quotes": s.open_quotes,
-                    "next_nonce": s.next_nonce,
-                    "newest_expires_at": s.newest_expires_at,
-                    "snapshot_age_secs": s.snapshot_age_secs,
-                }),
-            );
-            let fresh = s
-                .snapshot_age_secs
-                .is_some_and(|a| a <= w.limits.max_snapshot_age);
-            if !fresh {
-                p.alerts.push(alert(
-                    "risk-unavailable",
-                    "status",
-                    w.maker.to_string(),
-                    match s.snapshot_age_secs {
-                        Some(a) => format!(
-                            "the maker's snapshot is {a} s old, above {}: it refuses every quote",
-                            w.limits.max_snapshot_age
-                        ),
-                        None => "the maker has no snapshot: it refuses every quote".to_string(),
-                    },
-                ));
-            }
-        }
-        Err(e) => {
-            line.insert("status".into(), json!({"error": e}));
-            p.alerts.push(alert(
-                "maker-down",
-                "maker",
-                w.maker.to_string(),
-                format!("the maker does not answer Status: {e}"),
-            ));
-        }
-    }
-
-    // halted
-    let halt = match std::fs::metadata(&w.halt_file) {
-        Ok(_) => Some(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(false),
-        Err(_) => None,
-    };
-    let service_halted = answer.as_ref().is_ok_and(|s| s.halted);
-    if let Some(file) = halt {
-        p.observe("halt");
-        if file || service_halted {
-            p.alerts.push(alert(
-                "halted",
-                "halt",
-                w.maker.to_string(),
-                format!(
-                    "the maker is halted{}: no new quote until {} is removed",
-                    if file { " by its halt file" } else { "" },
-                    w.halt_file.display()
-                ),
-            ));
-        }
-    }
+    maker_checks(status, w, &mut p, &mut line);
 
     // no-series
     p.observe("series");
@@ -1110,30 +1133,64 @@ pub fn log_alert(w: &mut impl std::io::Write, a: &Alert, now: i64) -> bool {
     }
 }
 
-/// Runs `cmd` with `sh -c` for one alert, with the alert in `QUOTEBOOK_ALERT_KIND`,
-/// `QUOTEBOOK_ALERT_SUBJECT` and `QUOTEBOOK_ALERT_MESSAGE` (never on the command line). `true` if
-/// it exited 0, or there is no command.
+/// The longest an alert command may run before it is killed and retried.
+pub const ALERT_CMD_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// [`deliver_within`] with [`ALERT_CMD_TIMEOUT`].
 #[must_use]
 pub fn deliver(cmd: Option<&str>, a: &Alert) -> bool {
+    deliver_within(cmd, a, ALERT_CMD_TIMEOUT)
+}
+
+/// Runs `cmd` with `sh -c` for one alert, with the alert in `QUOTEBOOK_ALERT_KIND`,
+/// `QUOTEBOOK_ALERT_SUBJECT` and `QUOTEBOOK_ALERT_MESSAGE` (never on the command line). `true` if
+/// it exited 0 within `timeout`, or there is no command. A command still running at `timeout` is
+/// killed, so it cannot stop the watcher's loop.
+#[must_use]
+pub fn deliver_within(cmd: Option<&str>, a: &Alert, timeout: Duration) -> bool {
     let Some(cmd) = cmd.filter(|c| !c.trim().is_empty()) else {
         return true;
     };
-    match std::process::Command::new("sh")
+    let mut child = match std::process::Command::new("sh")
         .arg("-c")
         .arg(cmd)
         .env("QUOTEBOOK_ALERT_KIND", a.kind)
         .env("QUOTEBOOK_ALERT_SUBJECT", &a.subject)
         .env("QUOTEBOOK_ALERT_MESSAGE", &a.message)
-        .status()
+        .spawn()
     {
-        Ok(s) if s.success() => true,
-        Ok(s) => {
-            tracing::warn!(kind = a.kind, status = %s, "alert command failed; retried at the next pass");
-            false
-        }
+        Ok(c) => c,
         Err(e) => {
             tracing::warn!(kind = a.kind, error = %e, "alert command did not start; retried at the next pass");
-            false
+            return false;
+        }
+    };
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(s)) if s.success() => return true,
+            Ok(Some(s)) => {
+                tracing::warn!(kind = a.kind, status = %s, "alert command failed; retried at the next pass");
+                return false;
+            }
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                tracing::warn!(
+                    kind = a.kind,
+                    "alert command timed out and was killed; retried at the next pass"
+                );
+                return false;
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                tracing::warn!(kind = a.kind, error = %e, "alert command not awaited; retried at the next pass");
+                return false;
+            }
         }
     }
 }

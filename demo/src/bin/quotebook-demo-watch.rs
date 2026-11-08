@@ -21,6 +21,7 @@
 //! `finalized`, the maker's `Status` (2 s timeout, no nonce taken), the halt file and the
 //! taker's log. The RPC URL is never printed. Without `--interval` it makes one pass.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -121,6 +122,7 @@ fn run(args: &Args) -> Result<(), CliError> {
         WsStatus::new(endpoint).map_err(|e| CliError::Maker(format!("runtime: {e}")))?;
     let mut state = WatchState::default();
     let mut book = AlertBook::default();
+    let mut partial: HashMap<(&'static str, String), (bool, bool)> = HashMap::new();
     tracing::info!(
         maker = %watched.maker,
         payer = %watched.payer,
@@ -134,6 +136,7 @@ fn run(args: &Args) -> Result<(), CliError> {
         }
         let (due, resolved) = book.update(&pass.alerts, &pass.observed, pass.now, realert);
         for (kind, subject) in resolved {
+            partial.remove(&(kind, subject.clone()));
             emit(
                 &mut lines,
                 &json!({"resolved": kind, "subject": subject, "now": pass.now}),
@@ -149,11 +152,17 @@ fn run(args: &Args) -> Result<(), CliError> {
                     "now": pass.now,
                 }),
             );
-            let logged = alerts_log
-                .as_mut()
-                .is_none_or(|log| watch::log_alert(log, a, pass.now));
-            let sent = watch::deliver(alert_cmd.as_deref(), a);
-            if logged && sent {
+            // Each sink is retried alone, so one that worked is not repeated.
+            let key = (a.kind, a.subject.clone());
+            let (mut logged, mut sent) = partial.remove(&key).unwrap_or((false, false));
+            logged = logged
+                || alerts_log
+                    .as_mut()
+                    .is_none_or(|log| watch::log_alert(log, a, pass.now));
+            sent = sent || watch::deliver(alert_cmd.as_deref(), a);
+            if !(logged && sent) {
+                partial.insert(key, (logged, sent));
+            } else {
                 book.delivered(a, pass.now);
             }
         }

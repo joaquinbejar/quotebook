@@ -25,9 +25,9 @@ use quotebook_demo::config::DemoConfig;
 use quotebook_demo::host::associated_token_account;
 use quotebook_demo::logging::RotatingFile;
 use quotebook_demo::watch::{
-    alert_log_line, deliver, judge_spot, last_taker_run, listing_expected, log_alert, pass, Alert,
-    AlertBook, Limits, LineOut, Pass, SpotVerdict, StatusSource, TakerOutcome, WatchState, Watched,
-    REALERT_SECS,
+    alert_log_line, deliver, deliver_within, judge_spot, last_taker_run, listing_expected,
+    log_alert, pass, Alert, AlertBook, Limits, LineOut, Pass, SpotVerdict, StatusSource,
+    TakerOutcome, WatchState, Watched, REALERT_SECS,
 };
 use quotebook_demo::writer_cap::{read_exposure, Exposure};
 use quotebook_maker::protocol::{from_hex, StatusMessage};
@@ -736,7 +736,11 @@ fn a_failed_read_is_an_rpc_alert_that_observes_nothing_it_missed() {
     w.chain.fail_call = Some(1);
     let p = w.once();
     assert_eq!(kinds(&p), vec!["rpc"]);
-    assert!(p.observed.is_empty());
+    assert_eq!(
+        p.observed,
+        vec!["maker", "status", "halt"],
+        "no chain scope"
+    );
     assert_eq!(p.now, 1, "the host's clock");
     w.chain.fail_call = Some(2);
     let p = w.once();
@@ -885,4 +889,87 @@ fn the_alert_log_is_one_line_per_alert_and_rotates() {
     assert_eq!(lines(&dir.join("alerts.log.1")), 2);
     assert_eq!(lines(&dir.join("alerts.log.2")), 2);
     assert!(!dir.join("alerts.log.3").exists());
+}
+
+fn resolved_after(w: &mut World, book: &mut AlertBook, at: i64) -> Vec<(&'static str, String)> {
+    let p = w.once();
+    book.update(&p.alerts, &p.observed, at, REALERT_SECS).1
+}
+
+#[test]
+fn a_failed_read_does_not_resolve_collateral() {
+    let mut book = AlertBook::default();
+    let mut w = World::at("collateral-read", THURSDAY);
+    w.usdc(4_999_999, 4_000_000);
+    let p = w.once();
+    let (due, _) = book.update(&p.alerts, &p.observed, 100, REALERT_SECS);
+    assert!(due.iter().any(|a| a.kind == "collateral"));
+    // The writers cannot be read.
+    w.chain.fail_writers = true;
+    let resolved = resolved_after(&mut w, &mut book, 160);
+    assert!(
+        !resolved.iter().any(|(k, _)| *k == "collateral"),
+        "{resolved:?}"
+    );
+    w.chain.fail_writers = false;
+    // The token accounts cannot be read: the second RPC read of the pass.
+    w.chain.fail_call = Some(2);
+    let resolved = resolved_after(&mut w, &mut book, 220);
+    assert!(
+        !resolved.iter().any(|(k, _)| *k == "collateral"),
+        "{resolved:?}"
+    );
+    w.chain.fail_call = None;
+    // Read again with enough USDC: now it resolves.
+    w.usdc(14_000_000, 4_000_000);
+    let resolved = resolved_after(&mut w, &mut book, 280);
+    assert!(
+        resolved.iter().any(|(k, _)| *k == "collateral"),
+        "{resolved:?}"
+    );
+}
+
+#[test]
+fn a_failed_status_does_not_resolve_a_service_halt() {
+    let mut book = AlertBook::default();
+    let mut w = World::at("halted-read", THURSDAY);
+    let mut s = healthy_status();
+    s.halted = true;
+    w.maker = Maker(Ok(s));
+    let p = w.once();
+    let (due, _) = book.update(&p.alerts, &p.observed, 100, REALERT_SECS);
+    assert!(due.iter().any(|a| a.kind == "halted"));
+    w.maker = Maker(Err("no answer within 2 s".into()));
+    let resolved = resolved_after(&mut w, &mut book, 160);
+    assert!(
+        !resolved.iter().any(|(k, _)| *k == "halted"),
+        "{resolved:?}"
+    );
+    w.maker = Maker(Ok(healthy_status()));
+    let resolved = resolved_after(&mut w, &mut book, 220);
+    assert!(resolved.iter().any(|(k, _)| *k == "halted"), "{resolved:?}");
+}
+
+#[test]
+fn an_rpc_outage_still_reports_the_maker_and_the_halt_file() {
+    let mut w = World::at("outage", THURSDAY);
+    w.chain.fail_call = Some(1);
+    w.maker = Maker(Err("no answer within 2 s".into()));
+    std::fs::write(&w.watched.halt_file, b"").unwrap();
+    let p = w.once();
+    let mut got = kinds(&p);
+    got.sort_unstable();
+    assert_eq!(got, vec!["halted", "maker-down", "rpc"]);
+}
+
+#[test]
+fn a_hung_alert_command_is_killed() {
+    let x = a("balance", "payer");
+    let started = std::time::Instant::now();
+    assert!(!deliver_within(
+        Some("sleep 30"),
+        &x,
+        std::time::Duration::from_millis(100)
+    ));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }

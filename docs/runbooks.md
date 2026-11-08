@@ -241,7 +241,8 @@ the watcher (`--alerts-log`), and as `alert` lines in `watch.jsonl`. An alert th
 comes back every 3,600 s; one that clears writes a `resolved` line. Set
 `QUOTEBOOK_WATCH_ALERT_CMD` at install to also run a command per alert; it gets the alert in
 `QUOTEBOOK_ALERT_KIND`, `QUOTEBOOK_ALERT_SUBJECT` and `QUOTEBOOK_ALERT_MESSAGE`. A delivery that
-fails, to the log or the command, is retried at the next pass.
+fails, to the log or the command, is retried alone at the next pass; a command still running after 10 s
+is killed. During an RPC outage the `maker-down` and `halted` checks still run.
 
 | Kind | Means | Do |
 | --- | --- | --- |

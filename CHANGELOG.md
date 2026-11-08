@@ -25,8 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read from every metalbook `Writer` position at `finalized`, failing closed; and
   `schedule::closure_at`, `last_closure_before` and `utc_iso`.
 - `quotebook-maker`: `client::request_status`.
-- `quotebook-cli`: `Rpc::finalized_accounts`, `finalized_signatures` and `finalized_transaction`,
-  with `Cluster` implementations.
 - `jupiter-rfq` (`jupiter-rfq/`, not published; `docs/PLAN-phase2.md`, D6): an off-chain
   prototype of a Jupiter RFQ V1 webhook over quotebook's pricing. `POST /quote` prices in atoms
   with `quotebook_maker::pricing` within a deadline and declines with 404; `POST /swap` decodes the
