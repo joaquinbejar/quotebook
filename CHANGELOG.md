@@ -59,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `quotebook-demo`: the roll plan counts the rent metalbook charges the maker key for a new
+  position, and logs the drain it waited for. The first live apply failed on a maker with no SOL.
 - `quotebook-maker`: after a restart, `Status.newest_expires_at` is at least the end of the cold
   start, which bounds the quotes the previous run signed. A drain started right after a restart
   ended at once while one of those quotes could still fill.

@@ -57,6 +57,9 @@ use crate::writer_cap::{exposure_of, read_positions, Exposure, Position};
 
 /// The allowance approved on each pair's long-token account: the hard cap on chain (D5).
 pub const LONG_APPROVAL: u64 = 2;
+/// The rent metalbook charges the writer for a new `Writer` position, lamports (measured on
+/// devnet: the maker key pays it, not the fee payer).
+pub const POSITION_RENT: u64 = 1_056_640;
 /// The allowance approved on the USDC account, atoms (4 USDC; D5).
 pub const USDC_APPROVAL: u64 = 4_000_000;
 /// One troy ounce in milli-ounces: the demo trades 1 oz contracts only.
@@ -199,6 +202,8 @@ pub struct View {
     pub pairs: Vec<SeriesPair>,
     /// Every `Writer` position of the maker.
     pub positions: Vec<Position>,
+    /// The maker key's lamports: it pays the rent of a new position.
+    pub maker_lamports: u64,
     /// The maker's USDC account.
     pub usdc: Token,
     /// The maker's long-token account of each long mint read.
@@ -555,7 +560,19 @@ pub fn plan(view: &View, demo: &DemoConfig, max_long: u64) -> Result<CyclePlan, 
     }
     let mut cap = exposure;
     let mut mints = Vec::new();
+    let mut lamports = view.maker_lamports;
     for m in &targets {
+        if view.position(&m.address).is_none() {
+            if lamports < POSITION_RENT {
+                out.notes.push(format!(
+                    "{}: nothing minted, the maker key holds {lamports} lamports, under the \
+                     {POSITION_RENT} rent of a new position",
+                    m.address
+                ));
+                continue;
+            }
+            lamports = lamports.saturating_sub(POSITION_RENT);
+        }
         let held = view.long(&m.long_mint).map_or(0, |t| t.amount);
         let band = max_long.saturating_sub(held);
         let funding = free.checked_div(m.max_payout).unwrap_or(0);
@@ -701,8 +718,9 @@ pub fn read_view(rpc: &mut dyn Rpc, demo: &DemoConfig, maker: &Address) -> Resul
         .ok_or_else(|| CliError::Args("the configuration has no XAG".into()))?;
     let usdc_account = associated_token_account(maker, &demo.usdc_mint, &TOKEN_PROGRAM);
     let delegate = quotebook_sdk::pda::delegate(&demo.quotebook_program, maker).0;
-    let (slot, first) = rpc.finalized_accounts(&[CLOCK_SYSVAR, usdc_account, xag.feed_account])?;
-    let [clock, usdc, feed]: [Option<solana_account::Account>; 3] = first
+    let (slot, first) =
+        rpc.finalized_accounts(&[CLOCK_SYSVAR, usdc_account, xag.feed_account, *maker])?;
+    let [clock, usdc, feed, maker_account]: [Option<solana_account::Account>; 4] = first
         .try_into()
         .map_err(|_| rpc_error("getMultipleAccounts returned the wrong number of accounts"))?;
     let now = parse_clock(clock.as_ref(), slot)
@@ -806,6 +824,7 @@ pub fn read_view(rpc: &mut dyn Rpc, demo: &DemoConfig, maker: &Address) -> Resul
         book,
         pairs: demo.pairs.clone(),
         positions,
+        maker_lamports: maker_account.map_or(0, |a| a.lamports),
         usdc,
         longs,
     })
@@ -948,6 +967,13 @@ impl Run<'_> {
             if status.halted {
                 let clock = self.io.finalized_clock()?;
                 if ops::drain(&status, quotebook_core::UnixTimestamp::new(clock))? == Drain::Done {
+                    tracing::info!(
+                        open_quotes = status.open_quotes,
+                        next_nonce = status.next_nonce,
+                        newest_expires_at = ?status.newest_expires_at,
+                        finalized_clock = clock,
+                        "drained"
+                    );
                     return Ok(());
                 }
             }

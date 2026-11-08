@@ -24,7 +24,7 @@ use quotebook_demo::chain::{CLOCK_SYSVAR, SYSVAR_PROGRAM, TOKEN_PROGRAM};
 use quotebook_demo::config::{DemoConfig, SeriesPair};
 use quotebook_demo::cycle::{
     long_account, plan, read_view, run_cycle, with_pairs, BookSeries, CycleIo, MetalSeries,
-    Patience, Step, View, LONG_APPROVAL, USDC_APPROVAL,
+    Patience, Step, View, LONG_APPROVAL, POSITION_RENT, USDC_APPROVAL,
 };
 use quotebook_demo::host::associated_token_account;
 use quotebook_demo::writer_cap::Position;
@@ -127,6 +127,7 @@ fn view() -> View {
         book: vec![b13],
         pairs: vec![pair(&nov13, &b13)],
         positions: Vec::new(),
+        maker_lamports: 10_000_000,
         usdc: tok(14_000_000, USDC_APPROVAL),
         longs: vec![(nov13.long_mint, tok(0, LONG_APPROVAL))],
     }
@@ -774,7 +775,11 @@ impl Rpc for Chain {
 #[test]
 fn the_reader_sees_the_live_series_and_plans_the_first_mint() {
     let mut chain = Chain::with_series();
+    let mut funded = account(Address::default(), Vec::new());
+    funded.lamports = 2_000_000;
+    chain.accounts.insert(MAKER, funded);
     let v = read_view(&mut chain, &demo(), &MAKER).unwrap();
+    assert_eq!(v.maker_lamports, 2_000_000);
     assert_eq!(v.now, THURSDAY);
     assert_eq!(v.metal.len(), 1);
     let m = v.metal[0];
@@ -852,4 +857,20 @@ fn settlement_covers_a_position_whose_pair_was_never_recorded() {
     assert!(steps.contains(&Step::Revoke {
         account: long_account(&MAKER, &a.long_mint)
     }));
+}
+
+#[test]
+fn a_new_position_needs_the_makers_rent() {
+    let mut v = view();
+    v.maker_lamports = POSITION_RENT - 1;
+    let p = plan(&v, &demo(), MAX_LONG).unwrap();
+    assert!(mints(&p.steps).is_empty());
+    assert!(p.notes.iter().any(|n| n.contains("rent")), "{:?}", p.notes);
+    v.maker_lamports = POSITION_RENT;
+    assert_eq!(mints(&plan(&v, &demo(), MAX_LONG).unwrap().steps).len(), 1);
+    // An existing position pays no new rent.
+    let m = v.metal[0];
+    v.maker_lamports = 0;
+    v.positions = vec![position(&m, 1, false)];
+    assert_eq!(mints(&plan(&v, &demo(), MAX_LONG).unwrap().steps).len(), 1);
 }
