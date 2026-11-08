@@ -750,6 +750,8 @@ fn test_restart_waits_for_the_chain_clock_past_the_longest_cold_start() {
         ],
     );
     let end = NOW + 130;
+    // Before anything is issued, status already bounds the previous run's quotes.
+    assert_eq!(status(&s).newest_expires_at, Some(end));
     let fake = Fake::new(snapshot(1, NOW, NonceWindow::new()));
     s.reconcile(&fake).unwrap();
     assert_eq!(
@@ -769,6 +771,11 @@ fn test_restart_waits_for_the_chain_clock_past_the_longest_cold_start() {
     s.reconcile(&fake).unwrap();
     let q = quoted(s.respond(&request(SERIES_A, TakerSide::Buy, 1)));
     assert_eq!(q.terms().nonce, Nonce::new(3));
+    // The barrier stays; a later quote raises the bound past it.
+    assert_eq!(
+        status(&s).newest_expires_at,
+        Some(q.terms().expires_at.get().max(end))
+    );
 }
 
 #[test]

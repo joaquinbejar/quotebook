@@ -147,6 +147,26 @@ impl Board {
         Some(mark.value)
     }
 
+    /// Seconds since the spot of the series' metal was published, for the status answer: the
+    /// last accepted value however old, so a stale feed shows its age. `None` if the series is
+    /// not listed or no spot was ever accepted.
+    #[must_use]
+    pub fn spot_age(&self, series: &Address) -> Option<i64> {
+        let now = self.now();
+        let state = self.state.lock().ok()?;
+        let entry = state
+            .entries
+            .iter()
+            .find(|e| e.series.metalbook_series == *series)?;
+        let spot = state
+            .metals
+            .iter()
+            .find(|m| m.config.underlying == entry.series.underlying())?
+            .cell
+            .last()?;
+        now.checked_sub(spot.publish_time)
+    }
+
     /// The `PriceFeed` of one metalbook series.
     #[must_use]
     pub fn feed(self: &Arc<Self>, series: Address) -> SeriesFeed {
@@ -241,6 +261,10 @@ pub struct SeriesFeed {
 impl PriceFeed for SeriesFeed {
     fn mid(&self) -> Option<Decimal> {
         self.board.mid(&self.series)
+    }
+
+    fn age_secs(&self) -> Option<i64> {
+        self.board.spot_age(&self.series)
     }
 }
 
@@ -352,6 +376,21 @@ mod tests {
         let mid = board.feed(series.metalbook_series).mid().unwrap();
         assert_eq!(mid, expected(&[series], NOW)[0]);
         assert!(mid > Decimal::ZERO && mid < Decimal::new(52, 1));
+    }
+
+    #[test]
+    fn the_status_reports_the_spot_age_even_when_stale() {
+        let (board, time) = board();
+        let series = capped_call(1, 52, EXPIRY).metalbook_series;
+        let feed = board.feed(series);
+        assert_eq!(feed.age_secs(), None, "no spot yet");
+        read(&board, NOW - 40).unwrap();
+        assert_eq!(feed.age_secs(), Some(40));
+        // Past the age limit there is no mid, but the age is still reported.
+        time.store(NOW + 900, Ordering::SeqCst);
+        assert_eq!(feed.mid(), None);
+        assert_eq!(feed.age_secs(), Some(940));
+        assert_eq!(board.feed(address(77)).age_secs(), None, "not listed");
     }
 
     #[test]

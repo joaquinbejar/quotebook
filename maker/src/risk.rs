@@ -219,8 +219,10 @@ pub struct BookStatus {
     pub open_quotes: u32,
     /// The nonce the next quote would take: the `--new-min` of an emergency `cancel-all`.
     pub next_nonce: u64,
-    /// The latest expiry of any quote issued since start. A drain waits for a finalized Clock
-    /// at or past it.
+    /// The latest expiry of any quote that may still fill: the newest issued since start, and,
+    /// for a resumed service, at least the end of its cold start, which bounds every quote the
+    /// previous run could have signed. A drain waits for a finalized Clock at or past it.
+    /// `None` only for a fresh service that has issued nothing.
     pub newest_expires_at: Option<i64>,
     /// Seconds between `now` and the latest snapshot's Clock.
     pub snapshot_age_secs: Option<i64>,
@@ -522,7 +524,10 @@ impl Book {
             halted: is_halted,
             open_quotes: open,
             next_nonce: self.issuer.peek().get(),
-            newest_expires_at: self.newest_expires_at,
+            newest_expires_at: match (self.newest_expires_at, self.issuer.cold_start_until()) {
+                (Some(issued), Some(barrier)) => Some(issued.max(barrier)),
+                (issued, barrier) => issued.or(barrier),
+            },
             snapshot_age_secs: age,
         }
     }

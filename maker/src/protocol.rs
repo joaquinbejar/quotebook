@@ -114,7 +114,10 @@ pub struct StatusMessage {
     pub open_quotes: u32,
     /// The nonce the next quote would take.
     pub next_nonce: u64,
-    /// The latest expiry issued since start. A drain waits for a finalized Clock at or past it.
+    /// The latest expiry of any quote that may still fill: the newest issued since start and,
+    /// after a restart, at least the end of the cold start, which bounds the quotes of the
+    /// previous run. A drain waits for a finalized Clock at or past it. `None` only for a fresh
+    /// service that has issued nothing.
     pub newest_expires_at: Option<i64>,
     /// Seconds since the latest snapshot's Clock; `None` before the first snapshot.
     pub snapshot_age_secs: Option<i64>,

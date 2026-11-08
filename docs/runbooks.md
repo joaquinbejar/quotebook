@@ -143,3 +143,73 @@ was absolute: at the I9 mid of 1.20 its defaults gave a 54% deviation (`devnet.m
   by metalbook's maker (I9).
 - **Test mints** (QBB/QBQ, series 0): the payer is their mint authority:
   `spl-token mint <MINT> <AMOUNT> <ACCOUNT> --url devnet`.
+
+## 7. Demo maker on devnet (D3)
+
+`quotebook-demo-maker` under launchd, installed by `scripts/demo-agent.sh` ([`PLAN-phase2.md`](PLAN-phase2.md),
+D3). Devnet only: the script refuses any RPC URL but the public devnet one, and the service listens
+on `127.0.0.1` only.
+
+```sh
+cargo build --release -p quotebook-demo -p quotebook-cli
+K=~/.config/solana/quotebook-demo                       # maker.json, payer.json (chmod 600)
+DIR=~/.local/share/quotebook-demo/demo                  # binary, configs, logs, HALT
+QB=(--url https://api.devnet.solana.com --program-id 3Aq1AwFiK9ibNBLxvYQ18KLT9WbLwENQa3ZZViDW6mbo)
+```
+
+**Start:** `scripts/demo-agent.sh install demo`. It copies the binary and both configs out of the
+checkout, so a later `git pull` changes nothing until the next install. Every start resumes
+fail-closed: no quote until a **finalized** Clock passes `started_at + 60 s + 10 s`, and the hour's
+fills are rebuilt from the chain first. Check:
+- `scripts/demo-agent.sh status demo` shows `state = running` and a JSON status line;
+- `$DIR/maker.jsonl` has `resumed; quoting after the cold start on a finalized Clock`, then
+  `serving`;
+- a quote from the taker `3ZBj…sqLs` is refused with `RateLimited` until then, and afterwards with
+  a `RiskLimit` naming the limit when the maker lacks inventory or allowance.
+
+**Stop:** `kill <PID>` (from `status`) restarts it, at most once every 120 s, paying the cold start.
+To stop it for good: `launchctl bootout user/$(id -u)/com.quotebook.demo-maker.demo` (or `gui/`),
+or `scripts/demo-agent.sh uninstall demo`. Never `pkill`.
+
+**Halt and drain:** `scripts/demo-agent.sh halt demo` creates `$DIR/HALT`, so every request gets
+`Halted`, then waits until a finalized Clock reaches the service's `newest_expires_at`: the newest
+expiry it signed and, after a restart, at least the end of its cold start, since a quote of the
+previous run may still be fillable. A drain right after a restart therefore takes up to 70 s
+(60 s TTL + 10 s). Quotes signed before the halt stay fillable until then; the halt revokes
+nothing. Remove `$DIR/HALT` to
+quote again.
+
+**Revoke, in an emergency** (D1's order): `scripts/demo-agent.sh revoke demo`. It halts, sends
+`cancel_all` up to the service's next nonce, a token `Revoke` on the maker's USDC and long-token
+accounts, waits until a finalized snapshot shows both (the window's base at the new minimum, no
+allowance to the delegate PDA), then restarts the agent, which comes back halted: a live issuer
+cannot jump its counter. If the service is down, run it with `QUOTEBOOK_DEMO_NEW_MIN=<nonce>`
+above every nonce it signed. To resume: approve again (below), then remove `$DIR/HALT`.
+
+**Approvals** (the hard cap on chain, D5's sizes):
+
+```sh
+A=target/release/quotebook-admin
+$A approve $QB --payer $K/payer.json --maker $K/maker.json --account <USDC_ACCOUNT> --amount 4000000
+$A approve $QB --payer $K/payer.json --maker $K/maker.json --account <LONG_ACCOUNT> --amount 2
+```
+
+`target/release/quotebook-demo-maker accounts --url https://api.devnet.solana.com --config
+demo/config/devnet.json --maker-address <MAKER>` prints the accounts.
+
+**Key rotation:** no allowance is changed and no maker key is rotated until a drain or a revoke is
+confirmed. Then: create the new key, `init-maker` it, create its token accounts and approvals, move
+the inventory, replace `$K/maker.json` and `install` again. The old key's accounts keep no
+allowance after the revoke.
+
+**Refill:** the payer pays only the admin transactions (approvals, `cancel_all`, revokes); the
+service sends nothing. Top it up from `77ie…CPPV` with `solana transfer --url devnet`.
+
+**Crash loop:** launchd restarts at most once every 120 s, and each start costs one cold start and
+a few RPC reads, nothing on chain. Read `$DIR/stderr.log` (anything before logging starts) and the
+last `failed` line of `$DIR/maker.jsonl`. A start fails on a missing `MakerState`, a token account
+of the wrong mint or owner, or an unreadable configuration; fix it, then `install` again. To stop
+the loop first, `uninstall`.
+
+**Scheduled jobs and keys:** this agent holds only the demo maker key's file path. D5's roll job is
+the one that will hold the devnet admin key's path; a scheduled job never holds a mainnet admin key.
