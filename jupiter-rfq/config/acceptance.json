@@ -1,0 +1,47 @@
+{
+  "maker": "8Aa5d8d8yPGbBeJUPdHAUYt8tDdudkc61hXToMPpgxaq",
+  "quote_deadline_ms": 200,
+  "limits": {
+    "max_quotes": 10000,
+    "quote_life_secs": 55,
+    "min_landing_secs": 20,
+    "max_snapshot_age_secs": 30,
+    "max_spot_age_secs": 30,
+    "max_open_swaps": 4,
+    "max_fills_per_hour": 20,
+    "halt_file": "jupiter-rfq.HALT"
+  },
+  "fee_budget": {
+    "max_cu_limit": 400000,
+    "max_cu_price": 1000000,
+    "max_fee_lamports": 415000,
+    "max_fees_per_hour": 5000000,
+    "sol_floor": 100000000,
+    "lamports_per_signature": 5000
+  },
+  "markets": [
+    {
+      "base_mint": "So11111111111111111111111111111111111111112",
+      "quote_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "base_decimals": 9,
+      "quote_decimals": 6,
+      "maker_base_account": "8Aa5d8d8yPGbBeJUPdHAUYt8tDdudkcepxQq8DXSJrSh",
+      "maker_quote_account": "8Aa5d8d8yPGbBeJUPdHAUYt8tDdudkcYJw5BsXfwB9J5",
+      "mid": "150",
+      "min_half_spread_bps": 5,
+      "max_half_spread_bps": 100,
+      "max_skew_bps": 100,
+      "max_deviation": "0.05",
+      "max_base_out": 1000000000,
+      "max_quote_out": 150000000,
+      "target_base_atoms": 1000000000
+    }
+  ],
+  "wallet": {
+    "sol_lamports": 1000000000,
+    "balances": [
+      ["So11111111111111111111111111111111111111112", 1000000000],
+      ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", 150000000]
+    ]
+  }
+}

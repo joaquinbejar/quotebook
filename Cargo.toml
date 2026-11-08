@@ -1,5 +1,5 @@
 [workspace]
-members = ["quotebook-core", "program", "sdk", "maker", "cli", "demo", "lint-control", "test-programs/probe"]
+members = ["quotebook-core", "program", "sdk", "maker", "cli", "demo", "jupiter-rfq", "lint-control", "test-programs/probe"]
 # The libFuzzer targets are their own workspace on a pinned nightly (fuzz/rust-toolchain.toml).
 exclude = ["fuzz"]
 resolver = "2"
@@ -38,6 +38,11 @@ optfix = "0.3"
 metalbook-core = "0.1"
 metalbook-sdk = "0.1"
 pyth-lite = "0.1"
+# The Jupiter RFQ webhook prototype (jupiter-rfq/, docs/PLAN-phase2.md, D6), checked on crates.io
+# 2026-11-07: axum 0.8.9 and base64 0.23.1 are the latest stable. Only jupiter-rfq/ uses these.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "tracing"] }
+base64 = "0.23"
+tower = { version = "0.5", features = ["util"] }
 # CLI only, never core or the program. 4.4.0 is the latest stable but pulls the agave 4.4
 # crates LiteSVM 0.18.1 does not build with; 4.3.2 is the newest that resolves with the
 # LiteSVM pins (checked 2026-10-29). `~4.3`, not the caret `4.3`, so `cargo update` cannot move

@@ -131,7 +131,7 @@ D1 assumes a nonce and a signed quote. V1 has neither, so each mechanism needs a
 
 | D1 | V1 equivalent |
 | --- | --- |
-| Nonce issued under the lock | `quoteId`, single use: consumed at `/swap`, so a second transaction for one quote is refused. Keyed also by the message hash, so a retry of the same transaction is idempotent |
+| Nonce issued under the lock | `quoteId`, single use: consumed at `/swap`, so a second transaction for one quote is refused. Keyed also by the message hash, so a retry of the same transaction is idempotent, but only while its reservation is held, the book is ready and `expire_at` still leaves time to land. Once the reservation is released (finalized, failed or expired), a retry gets that terminal answer and never a new permission to sign |
 | Reservation when the quote is signed | Reservation when the transaction is **co-signed** (see below) |
 | Released when `window.check` fails | Released when the signature is finalized, with its balances in the same snapshot |
 | Released when Clock `>= expires_at` | Released when the signature is absent and finalized Clock `> expire_at`. Strictly greater: `fill` still passes when they are equal, unlike `settle` |
@@ -157,7 +157,12 @@ because two winning quotes can still collide; the loser becomes a rejection.
 
 **The fee is a liability until proven otherwise.** Quoting's "accounted for asynchronously" reads as
 the maker owing the difference later. So the book reserves the gross amount and accrues the fee. The
-sources do not say how or when it is collected, and that would need asking Jupiter.
+sources do not say how or when it is collected, and that would need asking Jupiter. Until then the
+accrued fee is **debt**: it is held against the output mint's balance like a reservation, so a later
+quote cannot spend it. The chain cannot rebuild it after a restart, so it lives in a durable ledger,
+written on every accrual. Each reservation is written to the same ledger before the book answers
+that it would sign, so a fill landing across a restart still accrues once; a missing or unreadable ledger, or a failed write, refuses every quote.
+Only an operator's recorded collection, with its evidence, releases it, and only once written.
 
 ## The fill-transaction validator
 
@@ -292,10 +297,38 @@ into a route. That is a separate integration, on Jupiter's side, and out of scop
 since its fills go through Jupiter's own `rfq_v2`. No page read documents a way for a third-party RFQ
 program to join.
 
+## The prototype as built
+
+`jupiter-rfq/` (D6's prototype) implements the sections above, with these choices where they
+leave room:
+
+- **Transactions** are parsed by hand (`tx.rs`), strictly: one packet, canonical lengths, no
+  trailing bytes, the sanitize rules. Lookups are parsed, then refused.
+- **`expire_at`** is not known when quoting, since Jupiter sets it. A fill is accepted when it lies
+  in `[quoted_at, quoted_at + 55 s + 10 s of skew]` and at least `min_landing_secs` (20 s in the
+  shipped config) after now.
+- **Accounts:** the maker's two token accounts in `fill` must be the configured ones, and the taker's
+  signature must verify with the maker's slot still empty; the toolkit's validator checks neither.
+- **Not quoted:** native-SOL paths (an optional token account left out), a separate receiver and an
+  integrator fee. `/quote` declines a receiver other than the taker; the validator refuses System
+  and token transfers and a non-zero `integrator_fee_bps`.
+- **Flags:** bit 0 must match the quote type; any other bit is refused.
+- **Tracking:** until the maker would sign, a transaction is identified by the taker's signature.
+- **No chain reads:** the binary reports a static wallet and static mids from its config; the desk's
+  release and rebuild logic is exercised against a fake chain in tests.
+- **At `/quote`** the per-transaction fee cap stands in for the unknown fee in the SOL floor and the
+  hourly budget.
+- **The OpenAPI example transaction** is not valid base64 (841 characters); the acceptance suite's
+  transaction is the one that decodes.
+- **The acceptance suite was not run:** `npm ci --ignore-scripts` refuses its out-of-sync
+  `package-lock.json`, and the pinned alternative, `pnpm-lock.yaml`, needs `pnpm`, which is not
+  installed. Its eight cases are replayed in `tests/acceptance.rs` under the `acceptance` feature.
+
 ## Not verified
 
 - How the fee rounds, on which side it applies for exact-out, and how the accrued fee is collected.
 - The Order Engine program's behaviour on mainnet: this reads its published source, and no build was
   compared with the deployed binary.
-- Whether the acceptance suite's lockfile installs cleanly; it has not been run.
+- The acceptance suite itself: its `package-lock.json` is out of sync, so `npm ci` refuses it.
+- How Jupiter reads `x-request-timeout`; the prototype takes milliseconds.
 - Anything in Jupiter's registration or Edge, by design.
