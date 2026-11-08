@@ -399,6 +399,11 @@ fn main_run(args: &Args) -> Result<bool, CliError> {
             },
         )) => match run.trade(series, side, before, long_exists) {
             Ok(line) => line,
+            // Nothing sent and the maker began to halt meanwhile: a skip, like any halted run.
+            Err((e, None)) if halt_file.exists() => {
+                tracing::info!(error = %e, "the maker began to halt during the run");
+                TradeLine::bare(host_now(), Outcome::Skipped, Some("maker halted".into()))
+            }
             Err((e, signature)) => {
                 tracing::error!(error = %e, "trade failed");
                 TradeLine {

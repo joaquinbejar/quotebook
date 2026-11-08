@@ -808,3 +808,48 @@ fn the_reader_counts_positions_at_finalized() {
     assert_eq!((e.contracts, e.committed), (2, 10_000_000));
     assert!(mints(&plan(&v, &demo(), MAX_LONG).unwrap().steps).is_empty());
 }
+
+/// Nov 20 listed at strikes 48 and 52, no pair, a contract written on 48 by a run that failed.
+fn stranded() -> (View, MetalSeries, MetalSeries) {
+    let mut v = view();
+    v.pairs.clear();
+    let a = call(7, 48, NOV13, SeriesState::Active);
+    let b = call(8, 52, NOV13, SeriesState::Active);
+    v.metal = vec![a, b];
+    v.book = vec![book_for(7, &a), book_for(8, &b)];
+    v.positions = vec![position(&a, 1, false)];
+    v.longs = vec![(a.long_mint, tok(1, 2)), (b.long_mint, tok(0, 0))];
+    v.spot = Some(51_900_000);
+    (v, a, b)
+}
+
+#[test]
+fn a_run_that_minted_and_failed_keeps_its_strike() {
+    let (mut v, a, _) = stranded();
+    let p = plan(&v, &demo(), MAX_LONG).unwrap();
+    assert_eq!(p.pairs.len(), 1);
+    assert_eq!(
+        p.pairs[0].metalbook_series, a.address,
+        "not the nearest, 52"
+    );
+    // No spot is needed to find it.
+    v.spot = None;
+    let p = plan(&v, &demo(), MAX_LONG).unwrap();
+    assert_eq!(p.pairs[0].metalbook_series, a.address);
+}
+
+#[test]
+fn settlement_covers_a_position_whose_pair_was_never_recorded() {
+    let (mut v, mut a, _) = stranded();
+    a.state = SeriesState::Settled;
+    v.metal[0] = a;
+    v.positions = vec![position(&a, 1, true)];
+    let steps = plan(&v, &demo(), MAX_LONG).unwrap().steps;
+    assert!(steps.contains(&Step::Redeem {
+        metal: a.address,
+        contracts: 1
+    }));
+    assert!(steps.contains(&Step::Revoke {
+        account: long_account(&MAKER, &a.long_mint)
+    }));
+}

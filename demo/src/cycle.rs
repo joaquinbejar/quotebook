@@ -5,8 +5,9 @@
 //! does only that ([`run_cycle`]):
 //!
 //! 1. **Pairs:** every tradable expiry of the 1 oz XAG capped calls gets one pair, the strike
-//!    nearest a fresh spot. A pair already configured for the expiry is kept, so the strike is
-//!    chosen once.
+//!    nearest a fresh spot. A pair already configured for the expiry is kept, and without one a
+//!    series the maker has an open position on is taken, so the strike is chosen once even
+//!    after a run that minted and then failed.
 //! 2. **Series:** a pair without a quotebook series gets one (`create_series`, signed by the
 //!    quotebook admin), with series 1's terms: `base_lot` 1, `quote_lot` 10,000, `fee_bps` 0.
 //! 3. **Mint:** up to the inventory band, the unlocked USDC and the writer cap, over every
@@ -14,7 +15,7 @@
 //! 4. **Approve:** the delegate on each pair's long-token account and on the USDC account.
 //! 5. **After settlement:** `claim_writer` on every settled or voided position, `redeem` of the
 //!    maker's own long tokens of a settled series, and a token `Revoke` on its long-token
-//!    account. A pair with nothing left to do leaves the configuration.
+//!    account, for every series paired or written. A pair with nothing left to do leaves the configuration.
 //!
 //! Steps 3 to 5 spend USDC that bid quotes reserve or replace an allowance, so they run only
 //! **between a D1 halt and drain and a finalized confirmation**: the halt file stops new quotes,
@@ -453,16 +454,24 @@ pub fn plan(view: &View, demo: &DemoConfig, max_long: u64) -> Result<CyclePlan, 
             targets.push(*m);
             continue;
         }
-        let Some(spot) = view.spot else {
-            out.notes.push(format!(
-                "expiry {expiry} not paired: no fresh XAG spot to choose its strike"
-            ));
-            continue;
-        };
-        let chosen = eligible
+        // A contract already written fixes the strike: a run that minted and then failed never
+        // recorded its pair, and the next one must not write a second strike for the expiry.
+        let written = eligible
             .iter()
-            .filter(|m| m.expiry == expiry)
-            .min_by(|a, b| nearest(a.strike, b.strike, spot));
+            .find(|m| m.expiry == expiry && view.position(&m.address).is_some_and(|p| p.open()));
+        let chosen = match (written, view.spot) {
+            (Some(m), _) => Some(m),
+            (None, Some(spot)) => eligible
+                .iter()
+                .filter(|m| m.expiry == expiry)
+                .min_by(|a, b| nearest(a.strike, b.strike, spot)),
+            (None, None) => {
+                out.notes.push(format!(
+                    "expiry {expiry} not paired: no fresh XAG spot to choose its strike"
+                ));
+                continue;
+            }
+        };
         let Some(m) = chosen.copied() else {
             continue;
         };
@@ -496,13 +505,20 @@ pub fn plan(view: &View, demo: &DemoConfig, max_long: u64) -> Result<CyclePlan, 
     let mut redeems = Vec::new();
     let mut revokes = Vec::new();
     let mut dropped: Vec<Address> = Vec::new();
-    for pair in &view.pairs {
-        let Some(m) = view.metal(&pair.metalbook_series) else {
+    // Every series the maker wrote, paired or not: a position whose pair was never recorded
+    // still has long tokens to redeem and an allowance to revoke.
+    let mut settling: Vec<Address> = view.pairs.iter().map(|p| p.metalbook_series).collect();
+    for p in &view.positions {
+        if !settling.contains(&p.series) {
+            settling.push(p.series);
+        }
+    }
+    for series in settling {
+        let Some(m) = view.metal(&series) else {
             out.notes.push(format!(
-                "pair {} dropped: its metalbook series is gone",
-                pair.metalbook_series
+                "pair {series} dropped: its metalbook series is gone"
             ));
-            dropped.push(pair.metalbook_series);
+            dropped.push(series);
             continue;
         };
         if !m.finished() {
