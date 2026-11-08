@@ -1,5 +1,7 @@
-//! `jupiter-rfq serve --config <file> --listen 127.0.0.1:<port>`: the webhook prototype on a
-//! loopback address. It holds no key and never signs (see the crate's docs).
+//! `jupiter-rfq serve --config <file> --listen 127.0.0.1:<port> --debt-ledger <file>`: the
+//! webhook prototype on a loopback address. It holds no key and never signs (see the crate's
+//! docs). The debt ledger must exist (`{"debts": []}` on a first start); a missing or unreadable
+//! one refuses every quote.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -7,25 +9,29 @@ use std::time::Duration;
 
 use jupiter_rfq::config::{ConfigFile, StaticChain, StaticSpot};
 use jupiter_rfq::desk::{Desk, Start, SystemClock};
+use jupiter_rfq::ledger::FileLedger;
 
-const USAGE: &str = "usage: jupiter-rfq serve --config <file> --listen 127.0.0.1:<port>";
+const USAGE: &str =
+    "usage: jupiter-rfq serve --config <file> --listen 127.0.0.1:<port> --debt-ledger <file>";
 /// How often the static wallet is re-read, so the snapshot stays fresh.
 const RECONCILE_EVERY: Duration = Duration::from_secs(5);
 
-fn args() -> Result<(String, SocketAddr), String> {
+fn args() -> Result<(String, SocketAddr, String), String> {
     let mut it = std::env::args().skip(1);
     if it.next().as_deref() != Some("serve") {
         return Err(USAGE.into());
     }
-    let (mut config, mut listen) = (None, None);
+    let (mut config, mut listen, mut ledger) = (None, None, None);
     while let Some(flag) = it.next() {
         match flag.as_str() {
             "--config" => config = it.next(),
             "--listen" => listen = it.next(),
+            "--debt-ledger" => ledger = it.next(),
             _ => return Err(USAGE.into()),
         }
     }
     let config = config.ok_or(USAGE)?;
+    let ledger = ledger.ok_or(USAGE)?;
     let listen: SocketAddr = listen
         .ok_or(USAGE)?
         .parse()
@@ -34,11 +40,11 @@ fn args() -> Result<(String, SocketAddr), String> {
     if !listen.ip().is_loopback() {
         return Err("--listen must be a loopback address".into());
     }
-    Ok((config, listen))
+    Ok((config, listen, ledger))
 }
 
 async fn run() -> Result<(), String> {
-    let (path, listen) = args()?;
+    let (path, listen, ledger) = args()?;
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
     let loaded = ConfigFile::from_json(&text)
         .and_then(|c| c.load())
@@ -47,6 +53,7 @@ async fn run() -> Result<(), String> {
         loaded.desk.clone(),
         Box::new(StaticSpot::new(loaded.mids.clone(), Box::new(SystemClock))),
         Box::new(SystemClock),
+        Box::new(FileLedger::new(ledger)),
         // Nothing was ever co-signed, so no previous run's transaction can be pending.
         Start::Fresh,
     ));

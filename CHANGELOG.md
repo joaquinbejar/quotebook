@@ -23,8 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   versioned transaction with a hand parser and applies the design's validator (allowlisted
   programs, one 37-byte `fill` matching the quote, the taker's signature) and fee budget
   (`u128` checked, caps per transaction and per hour, a SOL floor reserved under the lock);
-  `GET /tokens`. It holds no key and never signs or sends: a fill that passes is answered
-  `rejected`. The `acceptance` feature answers the toolkit suite's magic request ids.
+  `GET /tokens`. Jupiter's fee on landed fills is debt held against the balance until a recorded
+  collection releases it, kept in a durable ledger (`--debt-ledger`) that fails closed; a retried
+  swap is answered the same only while its reservation is held and can still land, and gets the
+  terminal answer once it is released. It holds no key and never signs or sends: a fill that
+  passes is answered `rejected`. The `acceptance` feature answers the toolkit suite's magic
+  request ids.
 
 ### Fixed
 

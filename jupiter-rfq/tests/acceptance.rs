@@ -21,6 +21,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use jupiter_rfq::config::{ConfigFile, StaticChain, StaticSpot};
 use jupiter_rfq::desk::{Desk, Start, SystemClock};
+use jupiter_rfq::ledger::MemoryLedger;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -35,6 +36,7 @@ fn app() -> axum::Router {
         loaded.desk.clone(),
         Box::new(StaticSpot::new(loaded.mids.clone(), Box::new(SystemClock))),
         Box::new(SystemClock),
+        Box::new(MemoryLedger::new()),
         Start::Fresh,
     ));
     let chain = StaticChain::new(loaded.wallet.0, loaded.wallet.1, Box::new(SystemClock));

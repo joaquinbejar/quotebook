@@ -17,7 +17,13 @@
 //! - **The fee budget** (`sol_floor`, `max_fees_per_hour`) is reserved under the same lock, so
 //!   two concurrent swaps cannot both pass against the same lamports.
 //! - **The fee is a liability:** each reservation also holds `ceil(out × fee_bps / 10,000)` of
-//!   the output mint, and a landed fill accrues it.
+//!   the output mint, and a landed fill accrues it as debt. Debt is held against the balance
+//!   like a reservation until it is collected, it lives in a durable [`DebtLedger`] so a restart
+//!   keeps it, and only [`Desk::record_collection`] releases it (see [`crate::ledger`]).
+//! - **A retry is idempotent only while it is safe:** the same message gets the same answer
+//!   while its reservation is held, the desk is ready and `expire_at` still leaves time to land.
+//!   Once the reservation is released (finalized, failed or expired), the retry gets that
+//!   terminal answer, never a new permission to sign.
 //! - **After a restart**, nothing co-signs until a finalized Clock is past the last `expire_at`
 //!   the previous run could have co-signed; the hour's fills and fees are rebuilt from the
 //!   wallet's finalized history, and if that fails co-signing stays refused for 3,600 s of
@@ -36,6 +42,7 @@ use rust_decimal::Decimal;
 use solana_address::Address;
 
 use crate::api::{QuoteRequest, QuoteResponse, QuoteType, RejectionReason, SwapRequest};
+use crate::ledger::DebtLedger;
 use crate::pricing::{self, PriceError, PricingInputs, Side};
 use crate::tx::Transaction;
 use crate::validate::{self, Expected, FeeBudget, Invalid, Validated};
@@ -315,8 +322,32 @@ pub struct DeskStatus {
     pub fills_last_hour: usize,
     /// Fees spent in the last hour of chain Clock, lamports.
     pub fees_last_hour: u64,
-    /// Jupiter's fee accrued on landed fills, per output mint, atoms.
+    /// Jupiter's fee accrued on landed fills and not yet collected, per output mint, atoms.
     pub accrued_fees: Vec<(Address, u64)>,
+    /// Why the debt ledger refuses, if it does.
+    pub ledger_failure: Option<&'static str>,
+}
+
+/// Why a collection is not recorded.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CollectionError {
+    /// No evidence, or evidence too long.
+    #[error("evidence of collection is required (1 to 128 characters)")]
+    Evidence,
+    /// More than is owed on that mint.
+    #[error("collected {collected} atoms but only {owed} are owed")]
+    MoreThanOwed {
+        /// Atoms recorded as collected.
+        collected: u64,
+        /// Atoms owed.
+        owed: u64,
+    },
+    /// The ledger was never loaded, so nothing it holds is known.
+    #[error("the debt ledger was not loaded")]
+    NotLoaded,
+    /// The release could not be written; nothing was released.
+    #[error("{0}")]
+    Write(String),
 }
 
 #[derive(Debug, Clone)]
@@ -342,6 +373,15 @@ struct Reservation {
     expire_at: i64,
 }
 
+/// A transaction already accepted: its quote, what was validated and, once the reservation is
+/// released, the terminal outcome a retry gets.
+#[derive(Debug, Clone)]
+struct Accepted {
+    quote_id: String,
+    validated: Validated,
+    outcome: Option<&'static str>,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Startup {
     Waiting { until: i64, started_at: i64 },
@@ -352,15 +392,21 @@ enum Startup {
 struct State {
     quotes: HashMap<String, StoredQuote>,
     reservations: Vec<Reservation>,
-    /// Message bytes already accepted, with their quote id: a retry is idempotent.
-    accepted: HashMap<Vec<u8>, (String, Validated)>,
+    /// Message bytes already accepted: a retry is idempotent while it is safe.
+    accepted: HashMap<Vec<u8>, Accepted>,
     snapshot: Option<Snapshot>,
     failure: Option<&'static str>,
     startup: Startup,
     blocked_until: Option<i64>,
     fills: VecDeque<i64>,
     fees: VecDeque<(i64, u64)>,
+    /// Fee debt per output mint, atoms: held against the balance until collected.
     accrued: HashMap<Address, u64>,
+    /// Whether the ledger was loaded; if not, it is never written over.
+    ledger_loaded: bool,
+    /// An accrual not yet written.
+    ledger_dirty: bool,
+    ledger_failure: Option<&'static str>,
 }
 
 /// The desk.
@@ -368,6 +414,7 @@ pub struct Desk {
     config: DeskConfig,
     spot: Box<dyn SpotSource>,
     clock: Box<dyn Clock>,
+    ledger: Box<dyn DebtLedger>,
     state: Mutex<State>,
 }
 
@@ -406,13 +453,29 @@ fn fee_liability(amount: u64, bps: u16) -> Option<u64> {
 }
 
 impl State {
+    fn owed(&self, mint: &Address) -> u64 {
+        self.accrued.get(mint).copied().unwrap_or(0)
+    }
+
+    /// What reservations and uncollected fee debt hold of `mint`.
     fn reserved_out(&self, mint: &Address) -> Option<u64> {
         self.reservations
             .iter()
             .filter(|r| &r.output_mint == mint)
-            .try_fold(0u64, |n, r| {
+            .try_fold(self.owed(mint), |n, r| {
                 n.checked_add(r.amount_out)?.checked_add(r.fee_liability)
             })
+    }
+
+    fn debts(&self) -> Vec<(Address, u64)> {
+        let mut out: Vec<(Address, u64)> = self
+            .accrued
+            .iter()
+            .filter(|(_, a)| **a > 0)
+            .map(|(m, a)| (*m, *a))
+            .collect();
+        out.sort_by_key(|(m, _)| m.to_string());
+        out
     }
 
     fn reserved_fees(&self) -> Option<u64> {
@@ -439,21 +502,30 @@ impl State {
             .unwrap_or(0)
     }
 
-    /// What may still go out of `mint`: the balance less what reservations hold.
+    /// What may still go out of `mint`: the balance less what reservations and debt hold.
     fn available(&self, mint: &Address) -> Option<u64> {
         self.balance(mint).checked_sub(self.reserved_out(mint)?)
     }
 }
 
 impl Desk {
-    /// A desk over `config`.
+    /// A desk over `config`, with the fee debt loaded from `ledger`. A ledger that cannot be
+    /// loaded refuses every quote and swap.
     #[must_use]
     pub fn new(
         config: DeskConfig,
         spot: Box<dyn SpotSource>,
         clock: Box<dyn Clock>,
+        ledger: Box<dyn DebtLedger>,
         start: Start,
     ) -> Self {
+        let (accrued, ledger_loaded, ledger_failure) = match ledger.load() {
+            Ok(debts) => (debts.into_iter().collect::<HashMap<_, _>>(), true, None),
+            Err(e) => {
+                tracing::warn!(error = %e, "debt ledger not loaded; refusing until restarted with a readable ledger");
+                (HashMap::new(), false, Some("debt ledger unreadable"))
+            }
+        };
         let startup = match start {
             Start::Fresh => Startup::Ready,
             Start::Resume { started_at } => Startup::Waiting {
@@ -469,6 +541,7 @@ impl Desk {
             config,
             spot,
             clock,
+            ledger,
             state: Mutex::new(State {
                 quotes: HashMap::new(),
                 reservations: Vec::new(),
@@ -479,7 +552,10 @@ impl Desk {
                 blocked_until: None,
                 fills: VecDeque::new(),
                 fees: VecDeque::new(),
-                accrued: HashMap::new(),
+                accrued,
+                ledger_loaded,
+                ledger_dirty: false,
+                ledger_failure,
             }),
         }
     }
@@ -554,21 +630,66 @@ impl Desk {
         }
         let clock = snapshot.clock;
         let mut kept = Vec::with_capacity(state.reservations.len());
+        let mut released: Vec<(TxId, &'static str)> = Vec::new();
         let reservations = std::mem::take(&mut state.reservations);
         for r in reservations {
             if let Some(landed) = snapshot.landed.iter().find(|l| l.id == r.id) {
                 state.fees.push_back((landed.at, landed.fee_lamports));
-                if !landed.failed {
+                if landed.failed {
+                    released.push((r.id, "finalized as failed"));
+                } else {
                     state.fills.push_back(landed.at);
-                    let e = state.accrued.entry(r.output_mint).or_insert(0);
-                    *e = e.saturating_add(r.fee_liability);
+                    let owed = state.owed(&r.output_mint);
+                    match owed.checked_add(r.fee_liability) {
+                        Some(n) => {
+                            state.accrued.insert(r.output_mint, n);
+                        }
+                        None => {
+                            // Never wraps: the debt is pinned at the maximum and the desk refuses.
+                            state.accrued.insert(r.output_mint, u64::MAX);
+                            state.ledger_failure = Some("fee debt overflows");
+                        }
+                    }
+                    state.ledger_dirty = true;
+                    released.push((r.id, "finalized"));
                 }
             } else if clock <= r.expire_at {
                 // `fill` still passes when Clock equals `expire_at`: release only past it.
                 kept.push(r);
+            } else {
+                released.push((r.id, "expired unlanded and released"));
             }
         }
         state.reservations = kept;
+        for (id, outcome) in released {
+            for a in state.accepted.values_mut() {
+                if a.validated.taker_signature == id {
+                    a.outcome = Some(outcome);
+                }
+            }
+        }
+        // A released transaction's terminal answer is kept an hour past its `expire_at`; after
+        // that its quote id is refused anyway.
+        state.accepted.retain(|_, a| {
+            a.outcome.is_none() || clock <= a.validated.expire_at.saturating_add(HOUR_SECS)
+        });
+        if state.ledger_dirty && state.ledger_loaded {
+            let debts = state.debts();
+            match self.ledger.store(&debts) {
+                Ok(()) => {
+                    state.ledger_dirty = false;
+                    if state.ledger_failure == Some("debt ledger write failed") {
+                        state.ledger_failure = None;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "debt ledger write failed; refusing until it succeeds");
+                    if state.ledger_failure.is_none() {
+                        state.ledger_failure = Some("debt ledger write failed");
+                    }
+                }
+            }
+        }
         if let Startup::Waiting { until, started_at } = state.startup {
             if clock >= until {
                 match history {
@@ -598,6 +719,9 @@ impl Desk {
     fn readiness(&self, state: &State, now: i64) -> Result<i64, Decline> {
         if halted(&self.config.limits) {
             return Err(Decline::Halted);
+        }
+        if let Some(why) = state.ledger_failure {
+            return Err(Decline::Unavailable(why));
         }
         if let Some(why) = state.failure {
             return Err(Decline::Unavailable(why));
@@ -834,16 +958,37 @@ impl Desk {
             .map_err(|e| Rejection::plain(format!("malformed transaction: {e}")))?;
         let now = self.clock.now();
         let mut state = self.lock();
-        if let Some((quote_id, validated)) = state.accepted.get(&tx.message_bytes) {
-            if quote_id == &req.quote_id {
-                return Ok(SwapDecision::WouldSign {
-                    message: tx.message_bytes.clone(),
-                    validated: *validated,
-                });
+        if let Some(a) = state.accepted.get(&tx.message_bytes).cloned() {
+            if a.quote_id != req.quote_id {
+                return Err(Rejection::plain(
+                    "transaction already accepted for another quote",
+                ));
             }
-            return Err(Rejection::plain(
-                "transaction already accepted for another quote",
-            ));
+            if let Some(outcome) = a.outcome {
+                return Err(Rejection::plain(format!(
+                    "transaction already {outcome}; not co-signed again"
+                )));
+            }
+            if !state
+                .reservations
+                .iter()
+                .any(|r| r.id == a.validated.taker_signature)
+            {
+                return Err(Rejection::plain(
+                    "transaction no longer reserved; not co-signed again",
+                ));
+            }
+            let clock = self
+                .readiness(&state, now)
+                .map_err(|d| Rejection::plain(d.to_string()))?;
+            let landing = now.saturating_add(self.config.limits.min_landing_secs);
+            if clock > a.validated.expire_at || landing > a.validated.expire_at {
+                return Err(Rejection::plain("too close to expire_at to co-sign again"));
+            }
+            return Ok(SwapDecision::WouldSign {
+                message: tx.message_bytes,
+                validated: a.validated,
+            });
         }
         let quote = state
             .quotes
@@ -932,9 +1077,14 @@ impl Desk {
             if let Some(q) = state.quotes.get_mut(&req.quote_id) {
                 q.consumed = true;
             }
-            state
-                .accepted
-                .insert(tx.message_bytes.clone(), (req.quote_id.clone(), validated));
+            state.accepted.insert(
+                tx.message_bytes.clone(),
+                Accepted {
+                    quote_id: req.quote_id.clone(),
+                    validated,
+                    outcome: None,
+                },
+            );
         }
         Ok(SwapDecision::WouldSign {
             message: tx.message_bytes,
@@ -948,9 +1098,7 @@ impl Desk {
         let state = self.lock();
         let clock = state.snapshot.as_ref().map_or(0, |s| s.clock);
         let floor = clock.saturating_sub(HOUR_SECS);
-        let mut accrued: Vec<(Address, u64)> =
-            state.accrued.iter().map(|(m, a)| (*m, *a)).collect();
-        accrued.sort_by_key(|(m, _)| m.to_string());
+        let accrued = state.debts();
         DeskStatus {
             halted: halted(&self.config.limits),
             quotes: state.quotes.len(),
@@ -959,6 +1107,60 @@ impl Desk {
             fills_last_hour: state.fills_since(floor),
             fees_last_hour: state.fees_since(floor).unwrap_or(u64::MAX),
             accrued_fees: accrued,
+            ledger_failure: state.ledger_failure,
         }
+    }
+
+    /// Records that `atoms` of the fee debt on `mint` were collected, with the operator's
+    /// `evidence` (a transaction signature or an invoice reference), and returns what is still
+    /// owed. The release is written to the ledger first; if that fails nothing is released.
+    ///
+    /// # Errors
+    ///
+    /// See [`CollectionError`].
+    pub fn record_collection(
+        &self,
+        mint: Address,
+        atoms: u64,
+        evidence: &str,
+    ) -> Result<u64, CollectionError> {
+        let evidence = evidence.trim();
+        if evidence.is_empty() || evidence.chars().count() > MAX_ID_LEN {
+            return Err(CollectionError::Evidence);
+        }
+        let mut state = self.lock();
+        if !state.ledger_loaded {
+            return Err(CollectionError::NotLoaded);
+        }
+        let owed = state.owed(&mint);
+        let left = owed
+            .checked_sub(atoms)
+            .ok_or(CollectionError::MoreThanOwed {
+                collected: atoms,
+                owed,
+            })?;
+        let mut debts: Vec<(Address, u64)> = state
+            .debts()
+            .into_iter()
+            .filter(|(m, _)| *m != mint)
+            .collect();
+        if left > 0 {
+            debts.push((mint, left));
+        }
+        self.ledger
+            .store(&debts)
+            .map_err(|e| CollectionError::Write(e.to_string()))?;
+        if left > 0 {
+            state.accrued.insert(mint, left);
+        } else {
+            state.accrued.remove(&mint);
+        }
+        state.ledger_dirty = false;
+        if state.ledger_failure == Some("debt ledger write failed") {
+            state.ledger_failure = None;
+        }
+        drop(state);
+        tracing::info!(%mint, atoms, left, evidence, "fee collection recorded");
+        Ok(left)
     }
 }

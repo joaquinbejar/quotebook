@@ -16,6 +16,7 @@
 
 mod desk;
 mod http;
+mod ledger;
 mod validator;
 
 use std::path::PathBuf;
@@ -33,6 +34,7 @@ use crate::desk::{
     ChainError, ChainView, Clock, Desk, DeskConfig, Landed, Limits, Market, Snapshot, Spent, Spot,
     SpotSource, Start, TxId,
 };
+use crate::ledger::MemoryLedger;
 use crate::pricing::PricingInputs;
 use crate::programs::{
     ComputeBudget, Fill, ASSOCIATED_TOKEN, COMPUTE_BUDGET, LIGHTHOUSE, ORDER_ENGINE, SYSTEM, TOKEN,
@@ -199,6 +201,11 @@ pub struct Rig {
 }
 
 pub fn rig_with(cfg: DeskConfig, start: Start) -> Rig {
+    rig_with_ledger(cfg, start, MemoryLedger::new())
+}
+
+/// A desk over `ledger`: two rigs over one ledger stand for a restart.
+pub fn rig_with_ledger(cfg: DeskConfig, start: Start, ledger: MemoryLedger) -> Rig {
     let clock = TestClock::new();
     let delay_ms = Arc::new(AtomicU64::new(0));
     let spot_age = Arc::new(AtomicI64::new(0));
@@ -210,6 +217,7 @@ pub fn rig_with(cfg: DeskConfig, start: Start) -> Rig {
             age: Arc::clone(&spot_age),
         }),
         Box::new(clock.clone()),
+        Box::new(ledger.clone()),
         start,
     ));
     let chain = FakeChain::new(NOW);

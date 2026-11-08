@@ -131,7 +131,7 @@ D1 assumes a nonce and a signed quote. V1 has neither, so each mechanism needs a
 
 | D1 | V1 equivalent |
 | --- | --- |
-| Nonce issued under the lock | `quoteId`, single use: consumed at `/swap`, so a second transaction for one quote is refused. Keyed also by the message hash, so a retry of the same transaction is idempotent |
+| Nonce issued under the lock | `quoteId`, single use: consumed at `/swap`, so a second transaction for one quote is refused. Keyed also by the message hash, so a retry of the same transaction is idempotent, but only while its reservation is held, the book is ready and `expire_at` still leaves time to land. Once the reservation is released (finalized, failed or expired), a retry gets that terminal answer and never a new permission to sign |
 | Reservation when the quote is signed | Reservation when the transaction is **co-signed** (see below) |
 | Released when `window.check` fails | Released when the signature is finalized, with its balances in the same snapshot |
 | Released when Clock `>= expires_at` | Released when the signature is absent and finalized Clock `> expire_at`. Strictly greater: `fill` still passes when they are equal, unlike `settle` |
@@ -157,7 +157,11 @@ because two winning quotes can still collide; the loser becomes a rejection.
 
 **The fee is a liability until proven otherwise.** Quoting's "accounted for asynchronously" reads as
 the maker owing the difference later. So the book reserves the gross amount and accrues the fee. The
-sources do not say how or when it is collected, and that would need asking Jupiter.
+sources do not say how or when it is collected, and that would need asking Jupiter. Until then the
+accrued fee is **debt**: it is held against the output mint's balance like a reservation, so a later
+quote cannot spend it. The chain cannot rebuild it after a restart, so it lives in a durable ledger,
+written on every accrual; a missing or unreadable ledger, or a failed write, refuses every quote.
+Only an operator's recorded collection, with its evidence, releases it, and only once written.
 
 ## The fill-transaction validator
 

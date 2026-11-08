@@ -7,7 +7,7 @@ use solana_keypair::Keypair;
 
 use super::*;
 use crate::api::{QuoteType, RejectionReason};
-use crate::desk::{Commit, Decline, SwapDecision};
+use crate::desk::{CollectionError, Commit, Decline, SwapDecision, HOUR_SECS};
 
 fn quote(r: &Rig, id: &str, taker: &Keypair) -> QuoteResponse {
     r.desk
@@ -538,4 +538,218 @@ fn malformed_quote_requests() {
     let mut q = quote_request("a", &t, true, QuoteType::ExactIn, 1_000_000);
     q.quote_id = "x".repeat(129);
     assert!(matches!(r.desk.quote(&q), Err(Decline::BadRequest(_))));
+}
+
+fn set_base(r: &Rig, atoms: u64) {
+    let mut s = r.chain.snapshot.lock().unwrap();
+    s.balances = vec![(BASE, atoms), (QUOTE, 2_000_000_000)];
+    s.slot += 1;
+    drop(s);
+    r.desk.reconcile(&r.chain).unwrap();
+}
+
+/// Reserves a 1,000,000,000 base atom fill and lands it: 200,000 base atoms of fee debt.
+fn land_one(r: &Rig, id: &str, taker: &Keypair) {
+    let q = quote(r, id, taker);
+    let v = reserve(r, &FillTx::for_quote(&q, taker).request(id, taker)).unwrap();
+    r.chain.land(v.taker_signature, 12_000, NOW + 5, false);
+    r.chain.at(NOW + 10);
+    r.desk.reconcile(&r.chain).unwrap();
+}
+
+fn base_out(id: &str, taker: &Keypair) -> QuoteRequest {
+    quote_request(id, taker, true, QuoteType::ExactOut, 1_000_000_000)
+}
+
+#[test]
+fn uncollected_fee_debt_is_held_against_inventory() {
+    let r = rig("debt-held");
+    let t = Keypair::new();
+    land_one(&r, "a", &t);
+    assert_eq!(r.desk.status().accrued_fees, vec![(BASE, 200_000)]);
+    // Codex's case: 1,000,399,999 held less 200,000 owed is 1,000,199,999, one atom short of
+    // 1,000,000,000 out plus its 200,000 liability.
+    set_base(&r, 1_000_399_999);
+    assert_eq!(
+        r.desk.quote(&base_out("b", &t)),
+        Err(Decline::Limit("inventory"))
+    );
+    set_base(&r, 1_000_400_000);
+    let q = r.desk.quote(&base_out("c", &t)).unwrap();
+    // And at `/swap`: quoted with room, then one atom less.
+    set_base(&r, 1_000_399_999);
+    let err = reserve(&r, &FillTx::for_quote(&q, &t).request("c", &t)).unwrap_err();
+    assert_eq!(err.known, Some(RejectionReason::InsufficientBalance));
+    assert_eq!(r.desk.status().open_swaps, 0);
+}
+
+#[test]
+fn fee_debt_survives_a_restart_and_only_a_recorded_collection_releases_it() {
+    let ledger = MemoryLedger::new();
+    let r = rig_with_ledger(config("debt-restart"), Start::Fresh, ledger.clone());
+    let t = Keypair::new();
+    land_one(&r, "a", &t);
+    assert_eq!(ledger.debts(), vec![(BASE, 200_000)], "written at once");
+    drop(r);
+
+    // A new desk over the same ledger: the chain alone could not rebuild this.
+    let r = rig_with_ledger(config("debt-restart"), Start::Fresh, ledger.clone());
+    assert_eq!(r.desk.status().accrued_fees, vec![(BASE, 200_000)]);
+    set_base(&r, 1_000_200_000);
+    assert_eq!(
+        r.desk.quote(&base_out("b", &t)),
+        Err(Decline::Limit("inventory"))
+    );
+
+    assert_eq!(
+        r.desk.record_collection(BASE, 200_000, "  "),
+        Err(CollectionError::Evidence)
+    );
+    assert_eq!(
+        r.desk.record_collection(BASE, 200_001, "invoice 7"),
+        Err(CollectionError::MoreThanOwed {
+            collected: 200_001,
+            owed: 200_000
+        })
+    );
+    // A release that cannot be written releases nothing.
+    ledger.fail_store(true);
+    assert!(matches!(
+        r.desk.record_collection(BASE, 200_000, "invoice 7"),
+        Err(CollectionError::Write(_))
+    ));
+    assert_eq!(r.desk.status().accrued_fees, vec![(BASE, 200_000)]);
+    assert_eq!(ledger.debts(), vec![(BASE, 200_000)]);
+    ledger.fail_store(false);
+
+    assert_eq!(
+        r.desk.record_collection(BASE, 50_000, "invoice 7"),
+        Ok(150_000)
+    );
+    assert_eq!(ledger.debts(), vec![(BASE, 150_000)]);
+    assert_eq!(r.desk.record_collection(BASE, 150_000, "invoice 8"), Ok(0));
+    assert!(ledger.debts().is_empty());
+    assert!(r.desk.status().accrued_fees.is_empty());
+    assert!(r.desk.quote(&base_out("b", &t)).is_ok());
+}
+
+#[test]
+fn an_unreadable_or_unwritten_ledger_refuses() {
+    let t = Keypair::new();
+    let ledger = MemoryLedger::new();
+    ledger.fail_load(true);
+    let r = rig_with_ledger(config("ledger-unreadable"), Start::Fresh, ledger.clone());
+    assert_eq!(
+        r.desk.quote(&base_out("a", &t)),
+        Err(Decline::Unavailable("debt ledger unreadable"))
+    );
+    assert_eq!(
+        r.desk.record_collection(BASE, 1, "invoice 1"),
+        Err(CollectionError::NotLoaded)
+    );
+    // Never written over: the unread ledger keeps whatever it holds.
+    ledger.fail_load(false);
+    r.chain.at(NOW + 1);
+    r.desk.reconcile(&r.chain).unwrap();
+    assert_eq!(
+        r.desk.quote(&base_out("a", &t)),
+        Err(Decline::Unavailable("debt ledger unreadable"))
+    );
+
+    // An accrual that cannot be written is kept in memory and refuses until a write succeeds.
+    let ledger = MemoryLedger::new();
+    let r = rig_with_ledger(config("ledger-write"), Start::Fresh, ledger.clone());
+    let q = quote(&r, "a", &t);
+    let v = reserve(&r, &FillTx::for_quote(&q, &t).request("a", &t)).unwrap();
+    ledger.fail_store(true);
+    r.chain.land(v.taker_signature, 12_000, NOW + 5, false);
+    r.chain.at(NOW + 10);
+    r.desk.reconcile(&r.chain).unwrap();
+    assert_eq!(r.desk.status().accrued_fees, vec![(BASE, 200_000)]);
+    assert_eq!(
+        r.desk.status().ledger_failure,
+        Some("debt ledger write failed")
+    );
+    assert_eq!(
+        r.desk.quote(&base_out("b", &t)),
+        Err(Decline::Unavailable("debt ledger write failed"))
+    );
+    ledger.fail_store(false);
+    r.chain.at(NOW + 20);
+    r.desk.reconcile(&r.chain).unwrap();
+    assert_eq!(ledger.debts(), vec![(BASE, 200_000)]);
+    assert_eq!(r.desk.status().ledger_failure, None);
+    assert!(r.desk.quote(&base_out("b", &t)).is_ok());
+}
+
+#[test]
+fn a_retry_after_release_gets_the_terminal_answer_not_a_new_permission() {
+    let r = rig("retry-release");
+    let (t1, t2, t3) = (Keypair::new(), Keypair::new(), Keypair::new());
+    let mut reqs = Vec::new();
+    for (id, t) in [("a", &t1), ("b", &t2), ("c", &t3)] {
+        let q = quote(&r, id, t);
+        let req = FillTx::for_quote(&q, t).request(id, t);
+        let v = reserve(&r, &req).unwrap();
+        reqs.push((req, v));
+    }
+    // a lands, b fails, c is never seen and expires: Codex's case is c.
+    r.chain
+        .land(reqs[0].1.taker_signature, 12_000, NOW + 5, false);
+    r.chain
+        .land(reqs[1].1.taker_signature, 12_000, NOW + 5, true);
+    let expire_at = reqs[2].1.expire_at;
+    r.chain.at(expire_at + 1);
+    r.desk.reconcile(&r.chain).unwrap();
+    assert_eq!(r.desk.status().open_swaps, 0);
+    let fees = r.desk.status().reserved_fees;
+    for ((req, _), outcome) in reqs.iter().zip([
+        "finalized",
+        "finalized as failed",
+        "expired unlanded and released",
+    ]) {
+        let err = reserve(&r, req).unwrap_err();
+        assert_eq!(
+            err.message,
+            format!("transaction already {outcome}; not co-signed again")
+        );
+        // The HTTP layer's dry run gets the same answer.
+        assert!(matches!(
+            r.desk.swap(req, Commit::DryRun),
+            SwapDecision::Reject(_)
+        ));
+    }
+    assert_eq!(r.desk.status().open_swaps, 0, "nothing reserved again");
+    assert_eq!(r.desk.status().reserved_fees, fees);
+
+    // An hour past expiry the terminal answer is dropped; the consumed quote still refuses.
+    r.chain.at(expire_at + HOUR_SECS + 1);
+    r.desk.reconcile(&r.chain).unwrap();
+    assert_eq!(
+        reserve(&r, &reqs[2].0).unwrap_err().message,
+        "quote already used"
+    );
+}
+
+#[test]
+fn a_retry_while_reserved_is_co_signed_only_while_it_can_still_land() {
+    let r = rig("retry-close");
+    let t = Keypair::new();
+    let q = quote(&r, "a", &t);
+    let req = FillTx::for_quote(&q, &t).request("a", &t);
+    let first = reserve(&r, &req).unwrap();
+    assert_eq!(reserve(&r, &req).unwrap(), first, "safe: the same answer");
+    // 20 s must be left to land: at expire_at - 19 the retry is refused, the reservation kept.
+    r.clock.set(first.expire_at - 19);
+    r.chain.at(first.expire_at - 19);
+    r.desk.reconcile(&r.chain).unwrap();
+    assert_eq!(
+        reserve(&r, &req).unwrap_err().message,
+        "too close to expire_at to co-sign again"
+    );
+    assert_eq!(r.desk.status().open_swaps, 1);
+    // Halted: refused too.
+    std::fs::write(&r.desk.config().limits.halt_file, b"").unwrap();
+    assert_eq!(reserve(&r, &req).unwrap_err().message, "halted");
+    std::fs::remove_file(&r.desk.config().limits.halt_file).unwrap();
 }
