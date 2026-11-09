@@ -18,6 +18,9 @@
 //! with no quotable series or inside the settlement window, and when neither side has anything to
 //! sell (`no inventory`).
 
+use std::path::Path;
+use std::time::{Duration, SystemTime};
+
 use quotebook_cli::error::CliError;
 use quotebook_maker::client::ClientError;
 use quotebook_maker::protocol::{RejectReason, TakerSide};
@@ -122,10 +125,28 @@ pub fn refused_by_limits(error: &CliError) -> Option<String> {
     match error {
         CliError::Quote(ClientError::Rejected {
             reason: RejectReason::RiskLimit,
-            ..
-        }) => Some("maker refused: risk limit".to_string()),
+            message,
+        }) => Some(format!("maker refused: {message}")),
         _ => None,
     }
+}
+
+/// How long a `roll.lock` counts as a live cycle. A cycle drains, sends and restarts in minutes;
+/// a lock left by a killed cycle must not stop the taker for good.
+pub const ROLL_LOCK_MAX_AGE: Duration = Duration::from_secs(900);
+
+/// Whether a roll holds `lock` (a directory) at `now`: the lock exists and is younger than
+/// [`ROLL_LOCK_MAX_AGE`]. A lock whose age cannot be read counts as held.
+#[must_use]
+pub fn roll_in_progress(lock: &Path, now: SystemTime) -> bool {
+    let Ok(meta) = std::fs::metadata(lock) else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        return true;
+    };
+    now.duration_since(modified)
+        .map_or(true, |age| age < ROLL_LOCK_MAX_AGE)
 }
 
 /// How a run ended, as D4's watcher reads it.
@@ -337,6 +358,21 @@ mod tests {
     }
 
     #[test]
+    fn a_roll_lock_holds_the_taker_only_while_fresh() {
+        let lock = std::env::temp_dir().join(format!("roll-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir(&lock);
+        let now = SystemTime::now();
+        assert!(!roll_in_progress(&lock, now), "no lock");
+        std::fs::create_dir(&lock).unwrap();
+        assert!(roll_in_progress(&lock, SystemTime::now()), "a fresh lock");
+        assert!(
+            !roll_in_progress(&lock, now + ROLL_LOCK_MAX_AGE + Duration::from_secs(60)),
+            "a stale lock does not block for ever"
+        );
+        std::fs::remove_dir(&lock).unwrap();
+    }
+
+    #[test]
     fn only_a_risk_limit_refusal_is_a_skip() {
         let rejected = |reason| {
             CliError::Quote(ClientError::Rejected {
@@ -346,7 +382,7 @@ mod tests {
         };
         assert_eq!(
             refused_by_limits(&rejected(RejectReason::RiskLimit)).as_deref(),
-            Some("maker refused: risk limit")
+            Some("maker refused: funds: balance or allowance")
         );
         assert_eq!(refused_by_limits(&rejected(RejectReason::Internal)), None);
         assert_eq!(

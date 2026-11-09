@@ -317,7 +317,7 @@ nothing to sell for a few days; the taker logs `no inventory`.
 prints the plan (`steps`, `pairs`, `notes`, and `needs_halt`), with no key loaded and nothing sent.
 
 **Start:** `scripts/demo-roll.sh install demo`, then the first run by hand: `scripts/demo-roll.sh
-run demo`. The agent runs every 6 hours (00:10, 06:10, 12:10 and 18:10 local time), not at load. One cycle at a time:
+run demo`. The agent runs every 6 hours (`StartInterval` 21600), not at load. One cycle at a time:
 `$DIR/roll.lock` holds the PID of the running one; a lock whose PID is gone is taken over.
 
 **A failed cycle** prints its JSON with `error` and what it sent, exits 1, and **leaves
@@ -332,7 +332,7 @@ incident, or a revoke (section 7) whose approvals must not come back on their ow
 `status`); its halt file, if any, stays. Never `pkill`.
 
 **Demo taker:** `scripts/demo-taker-agent.sh install demo` runs one taker run every 6 hours
-(03:10, 09:10, 15:10 and 21:10 local time, three hours from the roll), not at load; `scripts/demo-taker-agent.sh run demo` runs one by hand, and
+(`StartInterval` 21600), not at load; it skips while `$DIR/roll.lock` is held and younger than 15 minutes; `scripts/demo-taker-agent.sh run demo` runs one by hand, and
 `QUOTEBOOK_TAKER_DRY_RUN=1` makes it read and decide only, with no quote requested. The taker is
 `3ZBj…sqLs` (`~/.config/solana/quotebook-devnet/taker.json`, a file path in the plist) and pays its
 own fees. Each run buys 1 lot from the maker, or sells back what it holds, and appends one line to
