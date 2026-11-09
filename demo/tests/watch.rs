@@ -472,6 +472,40 @@ fn allowance_fires_under_a_fifth_of_the_approval() {
 }
 
 #[test]
+fn an_empty_account_with_a_full_cap_needs_no_allowance() {
+    let mut w = World::at("allowance-empty-full", THURSDAY);
+    w.long(0, 0);
+    w.writer(MAKER, 2, false);
+    assert_eq!(
+        kinds(&w.once()),
+        Vec::<&str>::new(),
+        "nothing can be minted"
+    );
+}
+
+#[test]
+fn an_empty_account_that_can_receive_tokens_still_alerts() {
+    let mut w = World::at("allowance-empty-room", THURSDAY);
+    w.long(0, 0);
+    assert_eq!(kinds(&w.once()), vec!["allowance"], "the cap has room");
+    w.chain.fail_writers = true;
+    let p = w.once();
+    assert!(
+        kinds(&p).contains(&"allowance"),
+        "an unread cap fails closed: {:?}",
+        p.alerts
+    );
+}
+
+#[test]
+fn an_account_holding_tokens_alerts_with_a_full_cap() {
+    let mut w = World::at("allowance-held-full", THURSDAY);
+    w.long(2, 0);
+    w.writer(MAKER, 2, false);
+    assert_eq!(kinds(&w.once()), vec!["allowance"]);
+}
+
+#[test]
 fn collateral_fires_only_when_the_cap_has_room_for_the_next_contract() {
     // One contract of series 1 locks (55 − 50) USDC × 1 oz = 5 USDC.
     let mut w = World::at("collateral", THURSDAY);

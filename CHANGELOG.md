@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `quotebook-demo-watch`: no `allowance` alert on an empty long-token account while the writer cap
+  is read and full; with room, an unread cap or tokens held, it still alerts.
+- `quotebook-demo-taker`: a quote refused by the maker's risk limits is recorded as `skipped`, not
+  `failed`.
+- The roll and taker agents run at fixed times three hours apart, so a fill cannot land in a roll's
+  restart.
+
 ### Added
 
 - `quotebook-demo-maker` (`demo/`, D3): the hosted demo maker on devnet, D1's multi-series service

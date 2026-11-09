@@ -250,7 +250,7 @@ is killed. During an RPC outage the `maker-down` and `halted` checks still run.
 | `balance` | the payer has under 0.3 SOL | refill it (section 7) |
 | `inventory` | the maker's or the taker's USDC is under 1 USDC | ask SOLANA-PROJECTS for funding (section 6) |
 | `collateral` | the cap has room for one more contract, but the maker's USDC cannot lock one | the next cycle writes nothing: fund it or let it be |
-| `allowance` | a delegate allowance is under 20% of its approval (4 USDC, 2 long tokens) | halt and drain, then approve again (section 7) |
+| `allowance` | a delegate allowance is under 20% of its approval (4 USDC, 2 long tokens) | halt and drain, then approve again (section 7); an empty long-token account is skipped only while the writer cap is read and full |
 | `maker-down` | no `Status` answer within 2 s | `scripts/demo-agent.sh status demo`, then its crash loop steps |
 | `stale-spot` | a feed is older than 600 s outside a listed closure, or unusable | check the feed; the maker quotes nothing on it meanwhile |
 | `risk-unavailable` | the maker's snapshot is older than 60 s, or missing | check the RPC; the maker refuses every quote meanwhile |
@@ -317,7 +317,7 @@ nothing to sell for a few days; the taker logs `no inventory`.
 prints the plan (`steps`, `pairs`, `notes`, and `needs_halt`), with no key loaded and nothing sent.
 
 **Start:** `scripts/demo-roll.sh install demo`, then the first run by hand: `scripts/demo-roll.sh
-run demo`. The agent runs every 6 hours (`StartInterval` 21600), not at load. One cycle at a time:
+run demo`. The agent runs every 6 hours (00:10, 06:10, 12:10 and 18:10 local time), not at load. One cycle at a time:
 `$DIR/roll.lock` holds the PID of the running one; a lock whose PID is gone is taken over.
 
 **A failed cycle** prints its JSON with `error` and what it sent, exits 1, and **leaves
@@ -332,7 +332,7 @@ incident, or a revoke (section 7) whose approvals must not come back on their ow
 `status`); its halt file, if any, stays. Never `pkill`.
 
 **Demo taker:** `scripts/demo-taker-agent.sh install demo` runs one taker run every 6 hours
-(`StartInterval` 21600), not at load; `scripts/demo-taker-agent.sh run demo` runs one by hand, and
+(03:10, 09:10, 15:10 and 21:10 local time, three hours from the roll), not at load; `scripts/demo-taker-agent.sh run demo` runs one by hand, and
 `QUOTEBOOK_TAKER_DRY_RUN=1` makes it read and decide only, with no quote requested. The taker is
 `3ZBj…sqLs` (`~/.config/solana/quotebook-devnet/taker.json`, a file path in the plist) and pays its
 own fees. Each run buys 1 lot from the maker, or sells back what it holds, and appends one line to

@@ -736,6 +736,8 @@ pub fn pass(
         });
     p.observe("rpc:tokens");
     let mut maker_usdc_amount: Option<u64> = None;
+    // Low allowances on empty long-token accounts, kept until the writer cap has been read.
+    let mut empty_low_allowance = Vec::new();
     match tokens {
         Err(e) => p.alerts.push(alert(
             "rpc",
@@ -814,7 +816,7 @@ pub fn pass(
                             ));
                         }
                         if allowance_low(s.delegated_amount, w.limits.long_approval) {
-                            p.alerts.push(alert(
+                            let low = alert(
                                 "allowance",
                                 "allowance",
                                 address.to_string(),
@@ -822,7 +824,12 @@ pub fn pass(
                                     "the delegate may move {} long tokens from {address}, under 20% of the {} approved: approve again",
                                     s.delegated_amount, w.limits.long_approval
                                 ),
-                            ));
+                            );
+                            if s.amount == 0 {
+                                empty_low_allowance.push(low);
+                            } else {
+                                p.alerts.push(low);
+                            }
                         }
                     }
                     Err(e) if live => p.alerts.push(alert(
@@ -899,6 +906,12 @@ pub fn pass(
             None
         }
     };
+
+    // An empty account needs no allowance only when nothing can be minted into it: the cap was
+    // read and is full. With room, or with the cap unread, it may be about to receive tokens.
+    if !exposure.is_some_and(|e| !e.has_room()) {
+        p.alerts.append(&mut empty_low_allowance);
+    }
 
     // collateral: a cycle could write one more contract, but the USDC cannot cover it.
     // Observed only when both inputs were read, so a failed read resolves nothing.

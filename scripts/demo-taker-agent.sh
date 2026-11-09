@@ -16,7 +16,7 @@
 #
 # `install` copies target/release/quotebook-demo-taker (QUOTEBOOK_TAKER_BIN overrides it) to
 # <dir>, writes the LaunchAgent ~/Library/LaunchAgents/com.quotebook.demo-taker.<name>.plist and
-# loads it: one run every 6 hours (StartInterval 21600), not at load. The taker is the I9 taker
+# loads it: one run every 6 hours (03:10, 09:10, 15:10 and 21:10 local time, three hours from the roll), not at load. The taker is the I9 taker
 # 3ZBj...sqLs; its keypair is a file path ($QUOTEBOOK_TAKER_KEY, default
 # ~/.config/solana/quotebook-devnet/taker.json) and it pays its own fees. The plist holds no key
 # material and no secret; the RPC URL is the public devnet one recorded by the maker's install.
@@ -131,7 +131,13 @@ install)
 		<string>Background</string>
 	</array>
 	<key>RunAtLoad</key><false/>
-	<key>StartInterval</key><integer>21600</integer>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>10</integer></dict>
+		<dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+		<dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>10</integer></dict>
+		<dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>10</integer></dict>
+	</array>
 	<key>StandardOutPath</key><string>$(xml "$dir/taker-stdout.log")</string>
 	<key>StandardErrorPath</key><string>$(xml "$dir/taker-stderr.log")</string>
 	<key>WorkingDirectory</key><string>$(xml "$dir")</string>
