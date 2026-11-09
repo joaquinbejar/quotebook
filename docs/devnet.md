@@ -530,6 +530,37 @@ Read only, from the branch, against public devnet and the running maker, with no
   1,999,970,000 lamports for its fees. The maker's `Status` answered (not halted), no quote was
   requested and no line was written.
 
-The first cycle and the first trade, with their signatures and checks, will be recorded here after
-the D5 merge. After that, a weekly docs PR summarizes `trades.jsonl` (count, volume, failures and
+### First cycle and first trades
+
+All on devnet, 2026-11-08 and 2026-11-09 UTC.
+
+- **First roll, by hand, 21:18Z:** mint 2 contracts of series 1 (`B66M…Zx21`, Nov 13 XAG 50 capped
+  call), signature `wBe4SGQ4qvLD698i9gs8pPEA4LCBboZP9LFaq2FoZTEpBvb3aFPmhdcoKiZNa8KY4QaXVVfJh8U1W1nk7BTHGRM`.
+  The first attempt failed in simulation because the maker held no SOL for its position rent; after
+  funding it with 0.01 SOL (`YvXiaqV4KrxsJH9AfeYSfC6P933xHaBRtTtqxfv4P6sqp23YuqsFdp6SrU7veysVVku5HFAmgrPtNdPHbBpSur6`)
+  the run succeeded. The plan now refuses a mint whose rent would strand the maker.
+- **First trade, by hand, 23:08:29Z:** the taker bought 1 lot at 1.81 USDC, fee 0, slot 520181333,
+  `2zRZP7dEeg3twfydRBm7sVP8MCGQrfrcKfyPtSMJfi89B8K2WBxYNfJx7ftAByqvEWE9FNYgCY9B7D7753qLb6dp`. A buy,
+  because the roll had left the maker at its band top of 2 long tokens. Taker 6.96 USDC and 2 long;
+  maker 5.81 USDC and 1 long; the watcher pass at 23:08:34Z agreed.
+- **First unattended roll, 05:10Z:** `create_series` for the Nov 20 XAG 53 capped call, signed by the
+  devnet admin, `2UTupS9QpEU5ZRQvDtXJ97kiRwgSr5Zu27tHtb9cmasDqGW8vjDf1BJECLzMvdmuqEjhookeJQfFY6HyQBwrmoJA`.
+  No halt and no mint (the writer cap was full); two pairs configured; maker and watcher restarted.
+- **First unattended trade, 05:10:19Z:** the taker sold 1 lot at 2.86 USDC, fee 0, slot 520272001,
+  `3MTTMRU2FXDAnNMMqdYpe9XyLvVxoFDJFbyYTB2PDTov8zwAbiqHMJG16MfxTteiPdGrCAFxvP8Rs2jXKcHWx7gz`. XAG had
+  moved from 51.59 to 53.02. Taker 9.82 USDC and 1 long; maker 2.95 USDC and 2 long.
+- **Alerts at 05:10:19Z:** `maker-down`, the restart window, resolved at the next pass. `allowance`
+  on the new Nov 20 long account `GqfU…44oG`, empty and unapproved because the cap was full: a false
+  positive. The watcher now skips an empty account only while the cap is read and full. The roll
+  agent was unloaded until that fix merged. Roll and taker also shared their start time, so the fill
+  landed in the restart second; they now run three hours apart.
+
+**Low USDC allowance.** After the 2.86 buyback the delegate may move 1.14 of 4 USDC. The maker's risk
+book refuses any bid above what is usable (`funds: balance or allowance`, reported as `RiskLimit`), so
+no quote is signed and nothing is sent; the taker records `skipped`, with no `fill-error`. A roll
+re-approves only below 20% (0.80 USDC) or when it already has work, so at 1.14 it does nothing and
+buybacks above that price stay refused until the next approval. An approval is one halted step that
+sets the allowance to 4 USDC, so it cannot loop.
+
+After that, a weekly docs PR summarizes `trades.jsonl` (count, volume, failures and
 their reasons, CU) without listing every signature.

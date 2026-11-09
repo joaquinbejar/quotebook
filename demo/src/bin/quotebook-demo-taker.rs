@@ -33,8 +33,8 @@ use quotebook_demo::config::DemoConfig;
 use quotebook_demo::host::{associated_token_account, HostSettings};
 use quotebook_demo::series::{read_series, ListedSeries};
 use quotebook_demo::taker::{
-    append, choose_series, decide, transaction_facts, Balances, Decision, Outcome, Situation,
-    TradeLine, SIZE_LOTS,
+    append, choose_series, decide, refused_by_limits, transaction_facts, Balances, Decision,
+    Outcome, Situation, TradeLine, SIZE_LOTS,
 };
 use quotebook_demo::watch::{printable, StatusSource, WsStatus};
 use quotebook_demo::{cycle, logging, ops, schedule};
@@ -403,6 +403,11 @@ fn main_run(args: &Args) -> Result<bool, CliError> {
             Err((e, None)) if halt_file.exists() => {
                 tracing::info!(error = %e, "the maker began to halt during the run");
                 TradeLine::bare(host_now(), Outcome::Skipped, Some("maker halted".into()))
+            }
+            // Refused before anything was signed: a low allowance or balance, or another limit.
+            Err((e, None)) if refused_by_limits(&e).is_some() => {
+                tracing::info!(error = %e, "the maker refused the quote");
+                TradeLine::bare(host_now(), Outcome::Skipped, refused_by_limits(&e))
             }
             Err((e, signature)) => {
                 tracing::error!(error = %e, "trade failed");

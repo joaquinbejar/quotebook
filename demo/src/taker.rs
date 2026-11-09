@@ -18,7 +18,9 @@
 //! with no quotable series or inside the settlement window, and when neither side has anything to
 //! sell (`no inventory`).
 
-use quotebook_maker::protocol::TakerSide;
+use quotebook_cli::error::CliError;
+use quotebook_maker::client::ClientError;
+use quotebook_maker::protocol::{RejectReason, TakerSide};
 use serde::Serialize;
 use solana_address::Address;
 
@@ -111,6 +113,19 @@ pub fn decide(s: &Situation, series: ListedSeries, b: &Balances) -> Decision {
         return Decision::Skip("no inventory");
     };
     Decision::Trade { series, side }
+}
+
+/// The reason to record when the maker's risk limits refused the quote: nothing was signed or
+/// sent, so the run is a skip and not a failure. A low allowance or balance ends here.
+#[must_use]
+pub fn refused_by_limits(error: &CliError) -> Option<String> {
+    match error {
+        CliError::Quote(ClientError::Rejected {
+            reason: RejectReason::RiskLimit,
+            ..
+        }) => Some("maker refused: risk limit".to_string()),
+        _ => None,
+    }
 }
 
 /// How a run ended, as D4's watcher reads it.
@@ -319,6 +334,26 @@ mod tests {
         assert_eq!(side(1, 0), Some(TakerSide::Sell));
         assert_eq!(side(0, 0), None, "no inventory on either side");
         assert_eq!(decide(&s, series, &b(0, 0)), Decision::Skip("no inventory"));
+    }
+
+    #[test]
+    fn only_a_risk_limit_refusal_is_a_skip() {
+        let rejected = |reason| {
+            CliError::Quote(ClientError::Rejected {
+                reason,
+                message: "funds: balance or allowance".into(),
+            })
+        };
+        assert_eq!(
+            refused_by_limits(&rejected(RejectReason::RiskLimit)).as_deref(),
+            Some("maker refused: risk limit")
+        );
+        assert_eq!(refused_by_limits(&rejected(RejectReason::Internal)), None);
+        assert_eq!(
+            refused_by_limits(&CliError::Rpc("down".into())),
+            None,
+            "anything else stays a failure"
+        );
     }
 
     #[test]
