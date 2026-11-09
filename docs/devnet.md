@@ -553,7 +553,13 @@ All on devnet, 2026-11-08 and 2026-11-09 UTC.
   on the new Nov 20 long account `GqfU…44oG`, empty and unapproved because the cap was full: a false
   positive. The watcher now skips an empty account only while the cap is read and full. The roll
   agent was unloaded until that fix merged. Roll and taker also shared their start time, so the fill
-  landed in the restart second; they now run three hours apart.
+  landed in the restart second.
+- **Schedule:** a move to `StartCalendarInterval` (#50) did not work: on this host, in `user/501`,
+  neither the 08:10Z taker slot nor the 11:10Z roll slot fired, though the triggers were registered;
+  the cause was not established. Both agents are back on `StartInterval` 21600, and the protection is
+  a guard rather than an offset: the roll keeps `roll.lock` through the maker's cold start, and the
+  taker records `skipped: roll in progress` while the lock exists. A lock older than 15 minutes is
+  treated as stale, so a killed cycle cannot block the taker for good.
 
 **Low USDC allowance.** After the 2.86 buyback the delegate may move 1.14 of 4 USDC. The maker's risk
 book refuses any bid above what is usable (`funds: balance or allowance`, reported as `RiskLimit`), so

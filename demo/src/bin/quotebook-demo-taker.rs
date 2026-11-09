@@ -22,6 +22,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::time::SystemTime;
 
 use quotebook_cli::args::Args;
 use quotebook_cli::rpc::{send, Cluster, Rpc};
@@ -33,8 +34,8 @@ use quotebook_demo::config::DemoConfig;
 use quotebook_demo::host::{associated_token_account, HostSettings};
 use quotebook_demo::series::{read_series, ListedSeries};
 use quotebook_demo::taker::{
-    append, choose_series, decide, refused_by_limits, transaction_facts, Balances, Decision,
-    Outcome, Situation, TradeLine, SIZE_LOTS,
+    append, choose_series, decide, refused_by_limits, roll_in_progress, transaction_facts,
+    Balances, Decision, Outcome, Situation, TradeLine, SIZE_LOTS,
 };
 use quotebook_demo::watch::{printable, StatusSource, WsStatus};
 use quotebook_demo::{cycle, logging, ops, schedule};
@@ -264,6 +265,7 @@ fn prepare(
     run: &mut Run,
     max_maker_long: u64,
     halt_file: &Path,
+    roll_lock: Option<&Path>,
 ) -> Result<(Situation, Plan), CliError> {
     let (_, now) = ops::finalized_clock(&mut run.rpc)?;
     let now = now.get();
@@ -274,6 +276,9 @@ fn prepare(
         series: read_series(&mut run.rpc, &run.demo)?,
         max_maker_long,
     };
+    if roll_lock.is_some_and(|l| roll_in_progress(l, SystemTime::now())) {
+        return Ok((situation, Plan::Skip("roll in progress")));
+    }
     let series = match choose_series(&situation) {
         Ok(s) => s,
         Err(reason) => return Ok((situation, Plan::Skip(reason))),
@@ -323,7 +328,13 @@ fn main_run(args: &Args) -> Result<bool, CliError> {
         endpoint,
     };
 
-    let prepared = prepare(&mut run, settings.limits.max_long, &halt_file);
+    let roll_lock = args.opt("roll-lock").map(PathBuf::from);
+    let prepared = prepare(
+        &mut run,
+        settings.limits.max_long,
+        &halt_file,
+        roll_lock.as_deref(),
+    );
     if dry_run {
         let status = WsStatus::new(&run.endpoint)
             .map_err(|e| e.to_string())
@@ -403,6 +414,19 @@ fn main_run(args: &Args) -> Result<bool, CliError> {
             Err((e, None)) if halt_file.exists() => {
                 tracing::info!(error = %e, "the maker began to halt during the run");
                 TradeLine::bare(host_now(), Outcome::Skipped, Some("maker halted".into()))
+            }
+            // Nothing sent and a roll began meanwhile: its restart explains the error.
+            Err((e, None))
+                if roll_lock
+                    .as_deref()
+                    .is_some_and(|l| roll_in_progress(l, SystemTime::now())) =>
+            {
+                tracing::info!(error = %e, "a roll began during the run");
+                TradeLine::bare(
+                    host_now(),
+                    Outcome::Skipped,
+                    Some("roll in progress".into()),
+                )
             }
             // Refused before anything was signed: a low allowance or balance, or another limit.
             Err((e, None)) if refused_by_limits(&e).is_some() => {

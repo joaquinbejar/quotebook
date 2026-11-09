@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is read and full; with room, an unread cap or tokens held, it still alerts.
 - `quotebook-demo-taker`: a quote refused by the maker's risk limits is recorded as `skipped`, not
   `failed`.
-- The roll and taker agents run at fixed times three hours apart, so a fill cannot land in a roll's
-  restart.
+- The taker skips while the roll holds `roll.lock`, which now spans the maker's cold start; a lock
+  older than 15 minutes is ignored.
 
 ### Added
 

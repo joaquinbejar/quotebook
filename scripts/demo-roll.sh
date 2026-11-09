@@ -34,7 +34,7 @@
 #
 # `install` copies target/release/quotebook-demo-roll (QUOTEBOOK_ROLL_BIN overrides it) and this
 # script to <dir>, writes the LaunchAgent ~/Library/LaunchAgents/com.quotebook.demo-roll.<name>.plist
-# and loads it: `run` every 6 hours (00:10, 06:10, 12:10 and 18:10 local time, three hours from the taker so a fill cannot land in a restart), not at load. Every run is idempotent,
+# and loads it: `run` every 6 hours (StartInterval 21600), not at load. Every run is idempotent,
 # so a missed or repeated one is harmless; in a normal week only the first run after a listing
 # or a settlement has anything to do, a pause of about 70 s. The plist holds keypair file paths
 # only, no key material and no secret: the maker and payer are $QUOTEBOOK_DEMO_KEYS/maker.json
@@ -132,6 +132,8 @@ restart() {
 			log "restarted $d/$l"
 		done
 	done
+	# roll.lock stays held through the maker's cold start: the taker skips while it exists.
+	sleep "${QUOTEBOOK_ROLL_RESTART_SETTLE:-90}"
 }
 
 case $cmd in
@@ -204,13 +206,7 @@ install)
 		<string>Background</string>
 	</array>
 	<key>RunAtLoad</key><false/>
-	<key>StartCalendarInterval</key>
-	<array>
-		<dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>10</integer></dict>
-		<dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>10</integer></dict>
-		<dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>10</integer></dict>
-		<dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>10</integer></dict>
-	</array>
+	<key>StartInterval</key><integer>21600</integer>
 	<key>StandardOutPath</key><string>$(xml "$dir/roll.log")</string>
 	<key>StandardErrorPath</key><string>$(xml "$dir/roll.log")</string>
 	<key>WorkingDirectory</key><string>$(xml "$dir")</string>
