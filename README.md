@@ -443,8 +443,7 @@ If you have any questions, issues, or would like to provide feedback, please fee
 
 
 ### **Contact Information**
-
-- **Author**: Joaquín Béjar García <https://joaquinbejar.capitaldelta.co/>
+- **Author**: Joaquín Béjar García
 - **Email**: jb@taunais.com
 - **Telegram**: [@joaquin_bejar](https://t.me/joaquin_bejar)
 - **Repository**: <https://github.com/joaquinbejar/quotebook>
@@ -465,18 +464,15 @@ Repositories by the same author that this project depends on, and repositories t
 
 | Repository | Description |
 |------------|-------------|
-| [market-maker-rs](https://github.com/joaquinbejar/market-maker-rs) · [crates.io](https://crates.io/crates/market-maker-rs) | Quantitative market making strategies, starting with the Avellaneda-Stoikov model. |
-
-### Reference
-
-| Repository | Description |
-|------------|-------------|
-| [otc-rfq](https://github.com/joaquinbejar/otc-rfq) | Off-chain OTC RFQ service; its price bounds and best-price ranking patterns are reused (copied with attribution, no dependency). |
+| [market-maker-rs](https://github.com/joaquinbejar/market-maker-rs) | Provides the quoting models the reference maker uses to price the quotes it signs. |
+| [metalbook](https://github.com/joaquinbejar/metalbook) | Provides the gold and silver option series (metalbook-core, metalbook-sdk) the demo maker quotes. |
+| [optfix](https://github.com/joaquinbejar/optfix) | Provides the fixed-point Black-Scholes pricing used to check option quotes on-chain. |
+| [varswap](https://github.com/joaquinbejar/varswap) | Realized variance accumulated on-chain from Pyth prices, and variance swaps settled against it, on Solana. |
 
 ### Used by
 
 | Repository | Description |
 |------------|-------------|
-| [metalbook](https://github.com/joaquinbejar/metalbook) | Cash-settled European options on gold and silver (XAU, XAG) on Solana, settled in USDC from Pyth. |
+| [metalbook](https://github.com/joaquinbejar/metalbook) | Cash-settled European options on gold and silver on Solana; uses quotebook as its RFQ venue. |
 
 <!-- related-projects:end -->
